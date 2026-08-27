@@ -1,6 +1,8 @@
 package com.sitson.vocab.data
 
 import com.sitson.vocab.domain.AttemptGrade
+import com.sitson.vocab.domain.DimensionEvidence
+import com.sitson.vocab.domain.GraduationPolicy
 import com.sitson.vocab.domain.MasteryDimension
 import com.sitson.vocab.domain.MemoryModel
 import com.sitson.vocab.domain.ReviewScheduler
@@ -32,9 +34,10 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
         return dao.wordCount() > 0 && (materials < dao.wordCount() * 6 || dao.materialUsageCount() > materials * 3)
     }
 
-    suspend fun queue(review: Boolean, limit: Int = 20, style: String = "", dimension: String = ""): List<StudyItem> {
+    suspend fun queue(review: Boolean, limit: Int = 20, style: String = "", dimension: String = "", dueOnly: Boolean = false): List<StudyItem> {
         val now = System.currentTimeMillis()
-        val candidates = if (review) dao.reviewCandidates().filter { dimension.isBlank() || it.dimension == dimension }.sortedWith(
+        val candidates = if (review) dao.reviewCandidates()
+            .filter { (dimension.isBlank() || it.dimension == dimension) && (!dueOnly || it.dueAt <= now) }.sortedWith(
             compareBy<ReviewCandidate> {
                 val elapsed = (now - it.lastReviewedAt).coerceAtLeast(0) / DAY
                 MemoryModel.retention(elapsed, it.stabilityDays)
@@ -42,7 +45,7 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
         ).take(limit) else dao.newCandidates(500).filter { dimension.isBlank() || it.dimension == dimension }.take(limit)
 
         val reserved = mutableSetOf<Long>()
-        return candidates.mapNotNull { candidate ->
+        val items = candidates.mapNotNull { candidate ->
             val materials = dao.materialsFor(candidate.id, style).filter { material ->
                 candidate.dimension != "CONTEXT_COMPREHENSION" ||
                     (material.type in setOf("SENTENCE", "PHRASE") && material.content.contains(candidate.term, ignoreCase = true))
@@ -55,6 +58,14 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
             val novel = if (candidate.dimension == "ISOLATED_MEANING") isolatedDelayed else uses == 0
             candidate.toStudyItem(material, novel)
         }
+        return avoidConsecutiveSameWord(items)
+    }
+
+    suspend fun dailyQueue(limit: Int, style: String = "", dimension: String = ""): List<StudyItem> {
+        val review = queue(review = true, limit = limit, style = style, dimension = dimension, dueOnly = true)
+        if (review.size >= limit) return review
+        val fresh = queue(review = false, limit = limit - review.size, style = style, dimension = dimension)
+        return avoidConsecutiveSameWord(review + fresh.filterNot { item -> review.any { it.id == item.id && it.dimension == item.dimension } })
     }
 
     suspend fun recordMaterialShown(item: StudyItem) {
@@ -79,6 +90,7 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
             decision.state.consecutiveSuccesses, decision.state.lapses, dueAt, now,
             decision.state.mastery, decision.state.distinctMaterials,
         )
+        checkGraduation(item.id, now)
     }
 
     suspend fun addGeneratedMaterials(materials: List<GeneratedMaterial>): Pair<Int, Int> {
@@ -114,7 +126,7 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
             return if (values.isEmpty()) 0.0 else values.average()
         }
         return AppStatistics(
-            words = dao.wordCount(), attempts = dao.attemptCount(), correct = dao.correctCount(), due = dao.dueCount(now),
+            words = dao.wordCount(), mastered = dao.masteredCount(), attempts = dao.attemptCount(), correct = dao.correctCount(), due = dao.dueCount(now),
             contextualStrength = dao.averageStrength("CONTEXT_COMPREHENSION"),
             isolatedStrength = dao.averageStrength("ISOLATED_MEANING"), productionStrength = dao.averageStrength("PRODUCTION"),
             contextualMastery = dao.averageMastery("CONTEXT_COMPREHENSION"),
@@ -122,6 +134,28 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
             contextualRetention = retention("CONTEXT_COMPREHENSION"),
             isolatedRetention = retention("ISOLATED_MEANING"), productionRetention = retention("PRODUCTION"),
         )
+    }
+
+    private suspend fun checkGraduation(wordId: Long, now: Long) {
+        val word = dao.words().firstOrNull { it.id == wordId } ?: return
+        if (word.status == "MASTERED") return
+        val dimensions = dao.progressForWord(wordId)
+        val mastered = GraduationPolicy.isMastered(
+            ageDays = (now - word.createdAt).coerceAtLeast(0) / DAY,
+            dimensions = dimensions.map { DimensionEvidence(it.mastery, it.stabilityDays) },
+            distinctMaterials = dao.distinctUsedMaterials(wordId),
+        )
+        if (mastered) dao.markMastered(wordId, now)
+    }
+
+    private fun avoidConsecutiveSameWord(items: List<StudyItem>): List<StudyItem> {
+        val remaining = items.toMutableList()
+        val result = mutableListOf<StudyItem>()
+        while (remaining.isNotEmpty()) {
+            val index = remaining.indexOfFirst { result.lastOrNull()?.id != it.id }.let { if (it < 0) 0 else it }
+            result += remaining.removeAt(index)
+        }
+        return result
     }
 
     private fun ReviewCandidate.toStudyItem(material: MaterialEntity, novel: Boolean) = StudyItem(

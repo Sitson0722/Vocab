@@ -26,7 +26,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val providerStore = SecureProviderStore(application)
 
     var words by mutableStateOf<List<WordSenseEntity>>(emptyList()); private set
-    var statistics by mutableStateOf(AppStatistics(0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)); private set
+    var statistics by mutableStateOf(AppStatistics(0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)); private set
     var materialStyles by mutableStateOf<List<String>>(emptyList()); private set
     var providerConfig by mutableStateOf(providerStore.load()); private set
     var message by mutableStateOf<String?>(null); private set
@@ -38,6 +38,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var interactionMode by mutableStateOf(InteractionMode.FLASHCARD); private set
     var grading by mutableStateOf(false); private set
     private var questionStarted = 0L
+    private var knownCount = 0
+    private var hardCount = 0
+    private var againCount = 0
+    private var skippedCount = 0
 
     val currentItem get() = session.getOrNull(sessionIndex)
 
@@ -113,14 +117,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mode: InteractionMode = InteractionMode.FLASHCARD,
     ) = viewModelScope.launch {
         interactionMode = mode
-        session = repository.queue(review, quantity.coerceIn(1, 500), style, dimension)
-        sessionIndex = 0; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
+        initializeSession(repository.queue(review, quantity.coerceIn(1, 500), style, dimension))
         if (session.isEmpty()) message = if (review) "No studied items match this material style yet." else "Add words before starting a learning session."
-        else repository.recordMaterialShown(session.first())
         if (review && repository.shouldRefreshMaterials() && ProviderConfigValidator.validate(providerConfig) == null) {
             // Never delay the local session for network generation.
             viewModelScope.launch { refreshMaterialsInternal(style, announce = false) }
         }
+    }
+
+    fun startDailyPlan(quantity: Int, style: String, dimension: String, mode: InteractionMode) = viewModelScope.launch {
+        interactionMode = mode
+        initializeSession(repository.dailyQueue(quantity.coerceIn(1, 500), style, dimension))
+        if (session.isEmpty()) message = "No learning or review items match these settings."
+    }
+
+    private suspend fun initializeSession(items: List<StudyItem>) {
+        session = items; sessionIndex = 0; feedback = null; hints = 0
+        knownCount = 0; hardCount = 0; againCount = 0; skippedCount = 0
+        questionStarted = System.currentTimeMillis()
+        session.firstOrNull()?.let { repository.recordMaterialShown(it) }
     }
 
     fun showHint() { if (feedback == null) hints++ }
@@ -145,6 +160,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val effortPenalty = if (rating == "HARD") 1 else 0
         try {
             repository.grade(item, correct, effortPenalty, System.currentTimeMillis() - questionStarted, "SELF_$rating")
+            when (rating) { "AGAIN" -> againCount++; "HARD" -> hardCount++; else -> knownCount++ }
             statistics = repository.statistics()
             advanceAfterGrade()
         } finally {
@@ -152,12 +168,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun skipCard() {
+        if (grading) return
+        skippedCount++
+        advanceAfterGrade()
+    }
+
     fun nextQuestion() {
         advanceAfterGrade()
     }
 
     private fun advanceAfterGrade() {
-        if (sessionIndex + 1 >= session.size) { session = emptyList(); sessionIndex = 0; message = "Session complete."; refresh(); return }
+        if (sessionIndex + 1 >= session.size) {
+            session = emptyList(); sessionIndex = 0
+            message = "Session complete — 会 $knownCount · 困难 $hardCount · 不会 $againCount · 跳过 $skippedCount"
+            refresh(); return
+        }
         sessionIndex++; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
         viewModelScope.launch { currentItem?.let { repository.recordMaterialShown(it) } }
     }

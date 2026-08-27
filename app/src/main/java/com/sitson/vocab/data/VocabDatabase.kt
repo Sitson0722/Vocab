@@ -25,6 +25,8 @@ data class WordSenseEntity(
     val phrase: String,
     val example: String,
     val createdAt: Long = System.currentTimeMillis(),
+    val status: String = "LEARNING",
+    val masteredAt: Long? = null,
 )
 
 @Entity(
@@ -124,6 +126,7 @@ data class ReviewCandidate(
 
 data class AppStatistics(
     val words: Int,
+    val mastered: Int,
     val attempts: Int,
     val correct: Int,
     val due: Int,
@@ -154,6 +157,7 @@ interface VocabDao {
 
     @Query("SELECT * FROM WordSenseEntity ORDER BY term, definition") suspend fun words(): List<WordSenseEntity>
     @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId AND dimension=:dimension") suspend fun progress(wordId: Long, dimension: String): ProgressEntity
+    @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId") suspend fun progressForWord(wordId: Long): List<ProgressEntity>
     @Query("SELECT w.id,w.term,w.phonetic,w.definition,w.phrase,w.example,p.dimension,p.dueAt,p.lastReviewedAt,p.stabilityDays,p.difficulty,p.attempts,p.mastery,p.distinctMaterials FROM WordSenseEntity w JOIN ProgressEntity p ON p.wordId=w.id WHERE p.attempts>0")
     suspend fun reviewCandidates(): List<ReviewCandidate>
     @Query("SELECT w.id,w.term,w.phonetic,w.definition,w.phrase,w.example,p.dimension,p.dueAt,p.lastReviewedAt,p.stabilityDays,p.difficulty,p.attempts,p.mastery,p.distinctMaterials FROM WordSenseEntity w JOIN ProgressEntity p ON p.wordId=w.id WHERE p.attempts=0 ORDER BY w.createdAt, CASE p.dimension WHEN 'CONTEXT_COMPREHENSION' THEN 0 WHEN 'ISOLATED_MEANING' THEN 1 ELSE 2 END LIMIT :limit")
@@ -165,11 +169,14 @@ interface VocabDao {
     @Query("SELECT COUNT(*) FROM MaterialEntity") suspend fun materialCount(): Int
     @Query("SELECT COUNT(*) FROM MaterialUsageEntity") suspend fun materialUsageCount(): Int
     @Query("SELECT COUNT(*) FROM WordSenseEntity") suspend fun wordCount(): Int
+    @Query("SELECT COUNT(*) FROM WordSenseEntity WHERE status='MASTERED'") suspend fun masteredCount(): Int
     @Query("SELECT COUNT(*) FROM AttemptEntity") suspend fun attemptCount(): Int
     @Query("SELECT COUNT(*) FROM AttemptEntity WHERE correct=1") suspend fun correctCount(): Int
     @Query("SELECT COUNT(*) FROM ProgressEntity WHERE dueAt<=:now AND attempts>0") suspend fun dueCount(now: Long): Int
     @Query("SELECT COALESCE(AVG(stabilityDays),0) FROM ProgressEntity WHERE dimension=:dimension") suspend fun averageStrength(dimension: String): Double
     @Query("SELECT COALESCE(AVG(mastery),0) FROM ProgressEntity WHERE dimension=:dimension") suspend fun averageMastery(dimension: String): Double
+    @Query("SELECT COUNT(DISTINCT m.id) FROM MaterialEntity m JOIN MaterialUsageEntity u ON u.materialId=m.id WHERE m.wordId=:wordId") suspend fun distinctUsedMaterials(wordId: Long): Int
+    @Query("UPDATE WordSenseEntity SET status='MASTERED', masteredAt=:masteredAt WHERE id=:wordId") suspend fun markMastered(wordId: Long, masteredAt: Long)
 
     @Transaction
     suspend fun addWordWithProgress(word: WordSenseEntity): Long {
@@ -182,7 +189,7 @@ interface VocabDao {
     }
 }
 
-@Database(entities = [WordSenseEntity::class, ProgressEntity::class, AttemptEntity::class, MaterialEntity::class, MaterialUsageEntity::class], version = 3, exportSchema = true)
+@Database(entities = [WordSenseEntity::class, ProgressEntity::class, AttemptEntity::class, MaterialEntity::class, MaterialUsageEntity::class], version = 4, exportSchema = true)
 abstract class VocabDatabase : RoomDatabase() {
     abstract fun dao(): VocabDao
 
@@ -190,7 +197,7 @@ abstract class VocabDatabase : RoomDatabase() {
         @Volatile private var instance: VocabDatabase? = null
         fun get(context: Context): VocabDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context, VocabDatabase::class.java, "vocab.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
         }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -213,6 +220,12 @@ abstract class VocabDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_MaterialUsageEntity_shownAt ON MaterialUsageEntity(shownAt)")
                 db.execSQL("INSERT OR IGNORE INTO MaterialEntity (wordId,type,content,explanation,styleTags,fingerprint,source,createdAt) SELECT id,'SENTENCE',example,definition,'general','legacy-sentence-' || id,'MIGRATED',createdAt FROM WordSenseEntity")
                 db.execSQL("INSERT OR IGNORE INTO MaterialEntity (wordId,type,content,explanation,styleTags,fingerprint,source,createdAt) SELECT id,'COLLOCATION',phrase,definition,'general','legacy-phrase-' || id,'MIGRATED',createdAt FROM WordSenseEntity")
+            }
+        }
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE WordSenseEntity ADD COLUMN status TEXT NOT NULL DEFAULT 'LEARNING'")
+                db.execSQL("ALTER TABLE WordSenseEntity ADD COLUMN masteredAt INTEGER")
             }
         }
     }

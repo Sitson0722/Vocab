@@ -46,6 +46,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sitson.vocab.data.StudyItem
 import com.sitson.vocab.data.WordImporter
 import com.sitson.vocab.provider.ProviderConfig
+import com.sitson.vocab.domain.GraduationPolicy
 import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
@@ -121,6 +122,17 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("Due", stats.due.toString(), Modifier.weight(1f))
             MetricCard("Senses", stats.words.toString(), Modifier.weight(1f))
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Daily mixed plan", style = MaterialTheme.typography.titleLarge)
+                Text("Fills your quota with highest-priority reviews first, then new items. Uses the review settings below.")
+                Button(
+                    onClick = { vm.startDailyPlan(reviewQuantity.toIntOrNull() ?: 20, reviewStyle.trim(), reviewDimension.key, reviewMode) },
+                    enabled = stats.words > 0 && (reviewQuantity.toIntOrNull() ?: 0) > 0,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Start daily plan") }
+            }
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -203,6 +215,7 @@ private fun WordsScreen(vm: AppViewModel) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(word.term, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(if (word.status == "MASTERED") "Mastered" else "Learning", color = if (word.status == "MASTERED") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary)
                         Text(word.phonetic, color = MaterialTheme.colorScheme.secondary)
                         Text(word.definition)
                         Text(word.phrase, color = MaterialTheme.colorScheme.primary)
@@ -292,6 +305,7 @@ private fun StudyScreen(vm: AppViewModel) {
                 OutlinedButton(onClick = { vm.selfGrade("HARD") }, enabled = !vm.grading, modifier = Modifier.weight(1f)) { Text("困难") }
                 Button(onClick = { vm.selfGrade("KNOW") }, enabled = !vm.grading, modifier = Modifier.weight(1f)) { Text("会") }
             }
+            TextButton(onClick = vm::skipCard, enabled = !vm.grading, modifier = Modifier.fillMaxWidth()) { Text("跳过（不改变进度）") }
         } else {
             Card(Modifier.fillMaxWidth()) { Text(vm.feedback!!, Modifier.padding(16.dp)) }
             Button(onClick = vm::nextQuestion, modifier = Modifier.fillMaxWidth()) { Text("Continue") }
@@ -359,6 +373,7 @@ private fun StatisticsScreen(vm: AppViewModel) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("Attempts", s.attempts.toString(), Modifier.weight(1f)); MetricCard("Accuracy", "$accuracy%", Modifier.weight(1f))
         }
+        MetricCard("Mastered senses", "${s.mastered} / ${s.words}", Modifier.fillMaxWidth())
         StrengthCard("New-context comprehension", s.contextualStrength, s.contextualMastery, s.contextualRetention)
         StrengthCard("Isolated word meaning", s.isolatedStrength, s.isolatedMastery, s.isolatedRetention)
         StrengthCard("Active production", s.productionStrength, s.productionMastery, s.productionRetention)
@@ -367,7 +382,8 @@ private fun StatisticsScreen(vm: AppViewModel) {
 }
 
 @Composable private fun StrengthCard(label: String, strength: Double, mastery: Double, retention: Double) {
-    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(label, style = MaterialTheme.typography.titleLarge); Text("Memory now: ${(retention * 100).roundToInt()}%", style = MaterialTheme.typography.headlineMedium); Text("Mastery: ${(mastery * 100).roundToInt()}% · ${"%.1f".format(strength)} stable days") } }
+    val level = GraduationPolicy.level(mastery, strength)
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text("$label · L$level", style = MaterialTheme.typography.titleLarge); Text("Memory now: ${(retention * 100).roundToInt()}%", style = MaterialTheme.typography.headlineMedium); Text("Mastery: ${(mastery * 100).roundToInt()}% · ${"%.1f".format(strength)} stable days") } }
 }
 
 @Composable private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {

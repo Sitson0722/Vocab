@@ -25,6 +25,8 @@ object MaterialImporter {
         Return ONLY a JSON array. Each object has exactly: term, definition, type, content, explanation, style.
         type is SENTENCE, PHRASE, COLLOCATION, or PROPER_NOUN. Generate several substantially different
         contexts per sense. SENTENCE/PHRASE/COLLOCATION content must contain the exact target term.
+        For PHRASE and COLLOCATION prefer high-frequency 2-4 word expressions. explanation must be
+        a concise Simplified Chinese translation or explanation of content.
         PROPER_NOUN may instead use a highly diagnostic named entity (for example FBI for federal), but
         its explanation must make the target relation unambiguous. Avoid mere paraphrases and ambiguous answers.
 

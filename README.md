@@ -38,5 +38,12 @@ saved. Bilingual mode now uses explicit English-to-Chinese cards (word/IPA -> la
 definition) or Chinese-to-English production cards. AI and manual import instructions require a
 Chinese definition.
 
+Version 0.6 integrates useful ideas from the companion `vocab-dual-dim` project: a daily mixed quota
+that schedules due reviews before new learning, non-consecutive dimensions of the same word, a skip
+action that does not mutate memory, automatic session summaries, readable L0-L5 indicators, and a
+strict mastered state requiring all three dimensions at 85% mastery/30 stable days, 90 elapsed days,
+and at least three distinct used materials. Its fixed interval table is retained only as an
+explanatory level mapping; Vocab continues to use the more precise continuous retention model.
+
 No API keys or signing material belong in the repository. Provider configuration and release-secret
 names will be documented when those integrations land.
