@@ -2,6 +2,7 @@ package com.sitson.vocab.data
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WordImporterTest {
@@ -32,5 +33,9 @@ class WordImporterTest {
             ```""",
         )
         assertEquals("subtle change", result.single().phrase)
+    }
+
+    @Test fun `AI import requires a Chinese definition`() {
+        assertTrue(WordImporter.aiPrompt("source").contains("Simplified Chinese"))
     }
 }

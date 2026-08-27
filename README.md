@@ -33,5 +33,10 @@ with an additional conventional English-Chinese card mode. Before learning or re
 select adaptive/context/isolated/production dimensions and either interaction mode. DeepSeek now
 defaults to `https://api.deepseek.com` with model `deepseek-v4-flash`.
 
+Version 0.5.1 advances immediately after self-grading and prevents duplicate taps while a grade is
+saved. Bilingual mode now uses explicit English-to-Chinese cards (word/IPA -> labelled Chinese
+definition) or Chinese-to-English production cards. AI and manual import instructions require a
+Chinese definition.
+
 No API keys or signing material belong in the repository. Provider configuration and release-secret
 names will be documented when those integrations land.

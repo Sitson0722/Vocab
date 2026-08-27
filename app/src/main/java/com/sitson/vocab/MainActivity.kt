@@ -225,7 +225,7 @@ private fun ImportDialog(vm: AppViewModel, onDismiss: () -> Unit) {
         title = { Text("Import vocabulary") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Offline fixed format — one sense per line:")
+                Text("Offline fixed format — one sense per line. Definition must be Chinese:")
                 Text(WordImporter.FORMAT_HELP, fontWeight = FontWeight.Bold)
                 OutlinedTextField(
                     value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
@@ -288,9 +288,9 @@ private fun StudyScreen(vm: AppViewModel) {
         if (vm.feedback == null) {
             Text("Self-grade from memory. You may reveal the back first, or grade without revealing.")
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { vm.selfGrade("AGAIN") }, modifier = Modifier.weight(1f)) { Text("不会") }
-                OutlinedButton(onClick = { vm.selfGrade("HARD") }, modifier = Modifier.weight(1f)) { Text("困难") }
-                Button(onClick = { vm.selfGrade("KNOW") }, modifier = Modifier.weight(1f)) { Text("会") }
+                OutlinedButton(onClick = { vm.selfGrade("AGAIN") }, enabled = !vm.grading, modifier = Modifier.weight(1f)) { Text("不会") }
+                OutlinedButton(onClick = { vm.selfGrade("HARD") }, enabled = !vm.grading, modifier = Modifier.weight(1f)) { Text("困难") }
+                Button(onClick = { vm.selfGrade("KNOW") }, enabled = !vm.grading, modifier = Modifier.weight(1f)) { Text("会") }
             }
         } else {
             Card(Modifier.fillMaxWidth()) { Text(vm.feedback!!, Modifier.padding(16.dp)) }
@@ -305,7 +305,17 @@ private fun StudyPrompt(item: StudyItem, mode: InteractionMode, revealed: Boolea
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (mode == InteractionMode.BILINGUAL) "English ↔ Chinese" else item.materialType.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge)
             if (!revealed) {
-                when (item.dimension) {
+                if (mode == InteractionMode.BILINGUAL) {
+                    if (item.dimension == "PRODUCTION") {
+                        Text("中文释义", style = MaterialTheme.typography.labelLarge)
+                        Text(item.definition, style = MaterialTheme.typography.headlineMedium)
+                        Text("回忆对应的英文单词或短语。")
+                    } else {
+                        Text(item.term, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                        Text(item.phonetic, style = MaterialTheme.typography.titleLarge)
+                        Text("回忆对应的中文释义。")
+                    }
+                } else when (item.dimension) {
                     "CONTEXT_COMPREHENSION" -> {
                         Text(item.materialContent, style = MaterialTheme.typography.titleLarge)
                         Text("What does “${item.term}” mean in this new context?")
@@ -323,10 +333,18 @@ private fun StudyPrompt(item: StudyItem, mode: InteractionMode, revealed: Boolea
                 }
                 Spacer(Modifier.weight(1f)); Text("Tap card to reveal answer", color = MaterialTheme.colorScheme.primary)
             } else {
-                Text("${item.term}  ${item.phonetic}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                Text(item.definition, style = MaterialTheme.typography.titleLarge)
-                Text(item.phrase, color = MaterialTheme.colorScheme.primary)
-                if (mode == InteractionMode.FLASHCARD) Text(item.materialExplanation.ifBlank { item.example })
+                if (mode == InteractionMode.BILINGUAL && item.dimension != "PRODUCTION") {
+                    Text("中文释义", style = MaterialTheme.typography.labelLarge)
+                    Text(item.definition, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    Text("${item.term}  ${item.phonetic}")
+                    Text(item.phrase, color = MaterialTheme.colorScheme.primary)
+                } else {
+                    Text("${item.term}  ${item.phonetic}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    if (mode == InteractionMode.BILINGUAL) Text("英文答案", style = MaterialTheme.typography.labelLarge)
+                    Text(item.definition, style = MaterialTheme.typography.titleLarge)
+                    Text(item.phrase, color = MaterialTheme.colorScheme.primary)
+                    if (mode == InteractionMode.FLASHCARD) Text(item.materialExplanation.ifBlank { item.example })
+                }
                 Spacer(Modifier.weight(1f)); Text("Tap card to hide answer", color = MaterialTheme.colorScheme.primary)
             }
         }

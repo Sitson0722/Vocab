@@ -36,6 +36,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var feedback by mutableStateOf<String?>(null); private set
     var hints by mutableStateOf(0); private set
     var interactionMode by mutableStateOf(InteractionMode.FLASHCARD); private set
+    var grading by mutableStateOf(false); private set
     private var questionStarted = 0L
 
     val currentItem get() = session.getOrNull(sessionIndex)
@@ -138,19 +139,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selfGrade(rating: String) = viewModelScope.launch {
         val item = currentItem ?: return@launch
-        if (feedback != null) return@launch
+        if (feedback != null || grading) return@launch
+        grading = true
         val correct = rating != "AGAIN"
         val effortPenalty = if (rating == "HARD") 1 else 0
-        repository.grade(item, correct, effortPenalty, System.currentTimeMillis() - questionStarted, "SELF_$rating")
-        feedback = when (rating) {
-            "AGAIN" -> "Marked not known. This item will return sooner."
-            "HARD" -> "Marked difficult. The interval grows cautiously."
-            else -> "Marked known."
+        try {
+            repository.grade(item, correct, effortPenalty, System.currentTimeMillis() - questionStarted, "SELF_$rating")
+            statistics = repository.statistics()
+            advanceAfterGrade()
+        } finally {
+            grading = false
         }
-        statistics = repository.statistics()
     }
 
     fun nextQuestion() {
+        advanceAfterGrade()
+    }
+
+    private fun advanceAfterGrade() {
         if (sessionIndex + 1 >= session.size) { session = emptyList(); sessionIndex = 0; message = "Session complete."; refresh(); return }
         sessionIndex++; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
         viewModelScope.launch { currentItem?.let { repository.recordMaterialShown(it) } }

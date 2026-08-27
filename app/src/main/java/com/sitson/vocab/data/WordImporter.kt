@@ -29,7 +29,7 @@ object WordImporter {
         Extract useful English vocabulary from the source. Split distinct meanings into separate items.
         Return ONLY a JSON array. Each object must contain exactly: term, phonetic, definition, phrase, example.
         Phonetic must be an IPA transcription enclosed in slashes, for example /ˈsʌtəl/.
-        Definition may use the source language. Phrase must be a natural collocation. Example must disambiguate the meaning.
+        Definition MUST be a concise Simplified Chinese meaning. Phrase must be a natural collocation. Example must disambiguate the meaning.
         Avoid duplicates and inflected duplicates.
         Use a ${style.ifBlank { "general" }} style for the phrase and example.
 
