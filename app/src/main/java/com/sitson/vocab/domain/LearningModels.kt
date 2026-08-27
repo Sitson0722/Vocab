@@ -14,9 +14,19 @@ data class AttemptGrade(
     val correct: Boolean,
     val hintsUsed: Int = 0,
     val responseMillis: Long = 0,
+    val elapsedDays: Double = 0.0,
 )
 
 data class ReviewDecision(
     val state: ReviewState,
     val nextIntervalDays: Double,
 )
+
+object MemoryModel {
+    /** Stability is the number of days at which predicted retention reaches 90%. */
+    fun retention(elapsedDays: Double, stabilityDays: Double): Double {
+        if (elapsedDays <= 0.0) return 1.0
+        return kotlin.math.exp(kotlin.math.ln(0.9) * elapsedDays / stabilityDays.coerceAtLeast(0.2))
+            .coerceIn(0.0, 1.0)
+    }
+}

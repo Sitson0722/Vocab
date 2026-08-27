@@ -9,11 +9,15 @@ class ReviewScheduler {
         val hintPenalty = min(0.6, grade.hintsUsed * 0.2)
         val slowPenalty = if (grade.responseMillis > 20_000) 0.15 else 0.0
         val quality = if (grade.correct) max(0.25, 1.0 - hintPenalty - slowPenalty) else 0.0
+        val retrievability = MemoryModel.retention(grade.elapsedDays, previous.stabilityDays)
+        // A successful retrieval near forgetting is stronger evidence than immediate repetition.
+        val spacingEvidence = (1.0 - retrievability).coerceIn(0.005, 1.0)
 
         val stability = if (grade.correct) {
-            previous.stabilityDays * (1.35 + quality * 0.9)
+            previous.stabilityDays * (1.0 + quality * (0.02 + 4.0 * spacingEvidence) * (1.05 - previous.difficulty * 0.35))
         } else {
-            max(0.2, previous.stabilityDays * 0.55)
+            // A lapse is evidence of overestimated stability, but does not erase durable history.
+            max(0.2, previous.stabilityDays * (0.55 + 0.15 * retrievability))
         }.coerceIn(0.2, 365.0)
 
         val difficulty = (previous.difficulty + if (grade.correct) -0.04 * quality else 0.12)

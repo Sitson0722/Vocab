@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -37,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.sitson.vocab.data.StudyItem
@@ -98,6 +100,7 @@ private fun Notice(message: String, dismiss: () -> Unit) {
 @Composable
 private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
     val stats = vm.statistics
+    var reviewQuantity by remember { mutableStateOf("20") }
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -110,9 +113,19 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
         }
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Review due items", style = MaterialTheme.typography.titleLarge)
-                Text("Uses your saved schedule and alternates comprehension with active recall.")
-                Button(onClick = { vm.startSession(true) }, enabled = stats.due > 0, modifier = Modifier.fillMaxWidth()) { Text("Review ${stats.due} due") }
+                Text("Review", style = MaterialTheme.typography.titleLarge)
+                Text("Review at any time. The weakest predicted memories come first; ${stats.due} are currently below the target retention schedule.")
+                OutlinedTextField(
+                    value = reviewQuantity,
+                    onValueChange = { reviewQuantity = it.filter(Char::isDigit).take(3) },
+                    modifier = Modifier.fillMaxWidth(), label = { Text("How many to review") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
+                )
+                Button(
+                    onClick = { vm.startSession(true, reviewQuantity.toIntOrNull() ?: 20) },
+                    enabled = stats.attempts > 0 && (reviewQuantity.toIntOrNull() ?: 0) > 0,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Start review now") }
             }
         }
         Card(Modifier.fillMaxWidth()) {
@@ -141,6 +154,7 @@ private fun WordsScreen(vm: AppViewModel) {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(word.term, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(word.phonetic, color = MaterialTheme.colorScheme.secondary)
                         Text(word.definition)
                         Text(word.phrase, color = MaterialTheme.colorScheme.primary)
                         Text(word.example, style = MaterialTheme.typography.bodySmall)
@@ -165,7 +179,7 @@ private fun ImportDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                 OutlinedTextField(
                     value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
                     minLines = 7, label = { Text("Vocabulary list or any source text") },
-                    placeholder = { Text("subtle | 细微而不易察觉的 | subtle difference | There is a subtle difference between them.") },
+                    placeholder = { Text("subtle | /ˈsʌtəl/ | 细微而不易察觉的 | subtle difference | There is a subtle difference between them.") },
                 )
                 Text("Fixed-format import stays offline. AI import sends this text to your configured provider and extracts separate senses, collocations, and examples.", style = MaterialTheme.typography.bodySmall)
                 if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -195,6 +209,9 @@ private fun StudyScreen(vm: AppViewModel) {
         }
         LinearProgressIndicator(progress = { (vm.sessionIndex + 1f) / vm.session.size }, modifier = Modifier.fillMaxWidth())
         Text("${vm.sessionIndex + 1} of ${vm.session.size}")
+        if (item.dimension == "COMPREHENSION" || vm.feedback != null) {
+            Text("${item.term}  ${item.phonetic}", style = MaterialTheme.typography.titleMedium)
+        }
         StudyPrompt(item, vm, answer, { answer = it })
         if (vm.hints > 0 && vm.feedback == null) {
             Text("Hint: starts with “${item.term.first()}”; common pattern: ${item.phrase.replace(item.term, "____", ignoreCase = true)}")

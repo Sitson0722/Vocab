@@ -79,8 +79,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         providerStore.save(config); providerConfig = config; message = "Provider saved securely."; return true
     }
 
-    fun startSession(review: Boolean) = viewModelScope.launch {
-        session = repository.queue(review)
+    fun startSession(review: Boolean, quantity: Int = 20) = viewModelScope.launch {
+        session = repository.queue(review, quantity.coerceIn(1, 500))
         sessionIndex = 0; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
         if (session.isEmpty()) message = if (review) "Nothing is due yet." else "Add words before starting a learning session."
     }

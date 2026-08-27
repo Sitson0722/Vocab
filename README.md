@@ -15,5 +15,10 @@ browser, and statistics. Provider API keys are encrypted by Android Keystore and
 Android backup. Advanced AI-material admission, backup/restore, richer discrimination/transfer
 exercises, and signed tag releases remain tracked in [IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md).
 
+Version 0.3 adds IPA phonetics and anytime review. Users choose any review quantity; the app ranks
+all previously studied items by predicted retention, difficulty, and time since review. Stability
+growth is spacing-sensitive, so immediate repetition provides much less long-term evidence than a
+successful delayed retrieval.
+
 No API keys or signing material belong in the repository. Provider configuration and release-secret
 names will be documented when those integrations land.

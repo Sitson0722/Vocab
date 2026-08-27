@@ -8,13 +8,14 @@ class WordImporterTest {
     @Test fun `fixed format imports separate senses and ignores comments`() {
         val result = WordImporter.fixedFormat(
             """
-            # word | meaning | phrase | example
-            charge | 收费 | charge for service | They charge for delivery.
-            charge | 指控 | charge with a crime | Police charged him with theft.
+            # word | IPA | meaning | phrase | example
+            charge | /tʃɑːrdʒ/ | 收费 | charge for service | They charge for delivery.
+            charge | /tʃɑːrdʒ/ | 指控 | charge with a crime | Police charged him with theft.
             """.trimIndent(),
         )
         assertEquals(2, result.size)
         assertEquals("指控", result[1].definition)
+        assertEquals("/tʃɑːrdʒ/", result[1].phonetic)
     }
 
     @Test fun `fixed format reports malformed line number`() {
@@ -27,7 +28,7 @@ class WordImporterTest {
     @Test fun `AI JSON accepts fenced arrays`() {
         val result = WordImporter.aiJson(
             """```json
-            [{"term":"subtle","definition":"细微的","phrase":"subtle change","example":"A subtle change occurred."}]
+            [{"term":"subtle","phonetic":"/ˈsʌtəl/","definition":"细微的","phrase":"subtle change","example":"A subtle change occurred."}]
             ```""",
         )
         assertEquals("subtle change", result.single().phrase)
