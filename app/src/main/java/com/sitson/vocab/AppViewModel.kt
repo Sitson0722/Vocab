@@ -26,7 +26,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val providerStore = SecureProviderStore(application)
 
     var words by mutableStateOf<List<WordSenseEntity>>(emptyList()); private set
-    var statistics by mutableStateOf(AppStatistics(0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)); private set
+    var statistics by mutableStateOf(
+        AppStatistics(
+            words = 0, mastered = 0, attempts = 0, correct = 0, due = 0,
+            contextualStrength = 0.0, isolatedStrength = 0.0, productionStrength = 0.0,
+            contextualMastery = 0.0, isolatedMastery = 0.0, productionMastery = 0.0,
+            contextualRetention = 0.0, isolatedRetention = 0.0, productionRetention = 0.0,
+        ),
+    ); private set
     var materialStyles by mutableStateOf<List<String>>(emptyList()); private set
     var providerConfig by mutableStateOf(providerStore.load()); private set
     var message by mutableStateOf<String?>(null); private set
