@@ -25,7 +25,9 @@ class ReviewScheduler {
             lapses = previous.lapses + if (grade.correct) 0 else 1,
         )
         // Failed items return soon, but never enter a rapid-fire loop.
-        val interval = if (grade.correct) max(1.0, stability * quality) else 0.25
+        // Productive recall is harder and receives a deliberately shorter interval for equal evidence.
+        val dimensionFactor = if (previous.dimension == MasteryDimension.PRODUCTION) 0.8 else 1.0
+        val interval = if (grade.correct) max(1.0, stability * quality * dimensionFactor) else 0.25
         return ReviewDecision(state, interval)
     }
 }

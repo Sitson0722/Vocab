@@ -30,4 +30,10 @@ class ReviewSchedulerTest {
         assertEquals(1, result.state.lapses)
         assertEquals(0, result.state.consecutiveSuccesses)
     }
+
+    @Test fun `production is scheduled more conservatively for equal evidence`() {
+        val comprehension = scheduler.review(ReviewState(MasteryDimension.COMPREHENSION, 5.0), AttemptGrade(true))
+        val production = scheduler.review(ReviewState(MasteryDimension.PRODUCTION, 5.0), AttemptGrade(true))
+        assertTrue(production.nextIntervalDays < comprehension.nextIntervalDays)
+    }
 }

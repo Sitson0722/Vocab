@@ -3,19 +3,29 @@ package com.sitson.vocab
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,124 +37,232 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.sitson.vocab.data.StudyItem
+import com.sitson.vocab.data.WordImporter
 import com.sitson.vocab.provider.ProviderConfig
-import com.sitson.vocab.provider.ProviderConfigValidator
-import com.sitson.vocab.provider.SecureProviderStore
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val providerStore = SecureProviderStore(applicationContext)
-        setContent { VocabApp(providerStore.load(), providerStore::save) }
+        enableEdgeToEdge()
+        setContent { VocabApp() }
     }
 }
 
-private enum class Screen { TODAY, PROVIDER_SETTINGS }
+private enum class AppTab(val label: String) { TODAY("Today"), WORDS("Words"), STATS("Statistics"), SETTINGS("Settings") }
 
 @Composable
-fun VocabApp(initialConfig: ProviderConfig, onSaveConfig: (ProviderConfig) -> Unit) {
-    var screen by remember { mutableStateOf(Screen.TODAY) }
-    var providerConfig by remember { mutableStateOf(initialConfig) }
+fun VocabApp(vm: AppViewModel = viewModel()) {
+    var tab by remember { mutableStateOf(AppTab.TODAY) }
     MaterialTheme {
         Surface(Modifier.fillMaxSize()) {
-            when (screen) {
-                Screen.TODAY -> TodayScreen(onSettings = { screen = Screen.PROVIDER_SETTINGS })
-                Screen.PROVIDER_SETTINGS -> ProviderSettingsScreen(
-                    initialConfig = providerConfig,
-                    onSave = {
-                        onSaveConfig(it)
-                        providerConfig = it
-                        screen = Screen.TODAY
-                    },
-                    onBack = { screen = Screen.TODAY },
-                )
+            if (vm.currentItem != null) StudyScreen(vm) else Scaffold(
+                bottomBar = {
+                    NavigationBar {
+                        AppTab.entries.forEach { item ->
+                            NavigationBarItem(
+                                selected = tab == item, onClick = { tab = item },
+                                icon = { Text(item.label.take(1), fontWeight = FontWeight.Bold) },
+                                label = { Text(item.label) },
+                            )
+                        }
+                    }
+                },
+            ) { padding ->
+                Column(Modifier.padding(padding).fillMaxSize()) {
+                    vm.message?.let { Notice(it, vm::clearMessage) }
+                    when (tab) {
+                        AppTab.TODAY -> TodayScreen(vm, onAddWords = { tab = AppTab.WORDS })
+                        AppTab.WORDS -> WordsScreen(vm)
+                        AppTab.STATS -> StatisticsScreen(vm)
+                        AppTab.SETTINGS -> ProviderSettingsScreen(vm)
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun TodayScreen(onSettings: () -> Unit) {
-    Column(modifier = Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Today", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            TextButton(onClick = onSettings) { Text("AI settings") }
+private fun Notice(message: String, dismiss: () -> Unit) {
+    Card(Modifier.padding(horizontal = 16.dp, vertical = 8.dp).fillMaxWidth()) {
+        Row(Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(message, Modifier.weight(1f)); TextButton(onClick = dismiss) { Text("Dismiss") }
         }
-        Text("Build understanding and active use separately.")
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            ProgressCard("Understand", "0 / 6", Modifier.weight(1f))
-            ProgressCard("Use", "0 / 4", Modifier.weight(1f))
-        }
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Next review", style = MaterialTheme.typography.titleLarge)
-                Text("The medicine produced a subtle improvement in his condition.")
-                Text("Choose the meaning that best fits this context.")
-            }
-        }
-        Button(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("Start learning") }
-        Text("Works offline with cached learning material.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 @Composable
-private fun ProviderSettingsScreen(
-    initialConfig: ProviderConfig,
-    onSave: (ProviderConfig) -> Unit,
-    onBack: () -> Unit,
-) {
-    var baseUrl by remember { mutableStateOf(initialConfig.baseUrl) }
-    var model by remember { mutableStateOf(initialConfig.model) }
-    var apiKey by remember { mutableStateOf(initialConfig.apiKey) }
-    var error by remember { mutableStateOf<String?>(null) }
+private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
+    val stats = vm.statistics
     Column(
-        modifier = Modifier.verticalScroll(rememberScrollState()).padding(24.dp),
+        Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Text("AI provider", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("Use any HTTPS provider that supports the OpenAI Chat Completions API.")
-        OutlinedTextField(
-            value = baseUrl, onValueChange = { baseUrl = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text("Base URL") }, supportingText = { Text("Example: https://api.openai.com/v1") },
-            singleLine = true,
-        )
-        OutlinedTextField(
-            value = model, onValueChange = { model = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text("Model") }, singleLine = true,
-        )
-        OutlinedTextField(
-            value = apiKey, onValueChange = { apiKey = it }, modifier = Modifier.fillMaxWidth(),
-            label = { Text("API key") }, visualTransformation = PasswordVisualTransformation(), singleLine = true,
-        )
-        Text(
-            "The key is encrypted using Android Keystore and is never included in backup exports.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        Button(
-            onClick = {
-                val candidate = ProviderConfig(baseUrl, model, apiKey)
-                error = ProviderConfigValidator.validate(candidate)
-                if (error == null) onSave(candidate)
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Save provider") }
-        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
+        Text("Today", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("Train the weakest knowledge at the moment it becomes useful to retrieve.")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MetricCard("Due", stats.due.toString(), Modifier.weight(1f))
+            MetricCard("Senses", stats.words.toString(), Modifier.weight(1f))
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Review due items", style = MaterialTheme.typography.titleLarge)
+                Text("Uses your saved schedule and alternates comprehension with active recall.")
+                Button(onClick = { vm.startSession(true) }, enabled = stats.due > 0, modifier = Modifier.fillMaxWidth()) { Text("Review ${stats.due} due") }
+            }
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Learn new words", style = MaterialTheme.typography.titleLarge)
+                Text("Introduces unpractised senses in context, then asks you to produce the word.")
+                Button(onClick = { vm.startSession(false) }, enabled = stats.words > 0, modifier = Modifier.fillMaxWidth()) { Text("Start new learning") }
+            }
+        }
+        if (stats.words == 0) OutlinedButton(onClick = onAddWords, modifier = Modifier.fillMaxWidth()) { Text("Add your first words") }
     }
 }
 
 @Composable
-private fun ProgressCard(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier) {
-        Column(Modifier.padding(16.dp)) {
-            Text(label, style = MaterialTheme.typography.labelLarge)
-            Text(value, style = MaterialTheme.typography.headlineSmall)
+private fun WordsScreen(vm: AppViewModel) {
+    var showImport by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().padding(20.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column { Text("Words", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text("${vm.words.size} distinct senses") }
+            Button(onClick = { showImport = true }) { Text("Add") }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (vm.words.isEmpty()) Text("No vocabulary yet. Tap Add to paste a list or extract words with AI.")
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(vm.words, key = { it.id }) { word ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(word.term, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(word.definition)
+                        Text(word.phrase, color = MaterialTheme.colorScheme.primary)
+                        Text(word.example, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+        }
+    }
+    if (showImport) ImportDialog(vm, onDismiss = { showImport = false })
+}
+
+@Composable
+private fun ImportDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { if (!vm.busy) onDismiss() },
+        title = { Text("Import vocabulary") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Offline fixed format — one sense per line:")
+                Text(WordImporter.FORMAT_HELP, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = text, onValueChange = { text = it }, modifier = Modifier.fillMaxWidth(),
+                    minLines = 7, label = { Text("Vocabulary list or any source text") },
+                    placeholder = { Text("subtle | 细微而不易察觉的 | subtle difference | There is a subtle difference between them.") },
+                )
+                Text("Fixed-format import stays offline. AI import sends this text to your configured provider and extracts separate senses, collocations, and examples.", style = MaterialTheme.typography.bodySmall)
+                if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.importFixed(text); onDismiss() }, enabled = !vm.busy) { Text("Import fixed") }
+                Button(onClick = { vm.importWithAi(text) }, enabled = !vm.busy) { Text("Import with AI") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !vm.busy) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun StudyScreen(vm: AppViewModel) {
+    val item = vm.currentItem ?: return
+    var answer by remember(item.id, item.dimension) { mutableStateOf("") }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(if (item.dimension == "COMPREHENSION") "Understand" else "Active recall", style = MaterialTheme.typography.titleLarge)
+            TextButton(onClick = vm::leaveSession) { Text("Exit") }
+        }
+        LinearProgressIndicator(progress = { (vm.sessionIndex + 1f) / vm.session.size }, modifier = Modifier.fillMaxWidth())
+        Text("${vm.sessionIndex + 1} of ${vm.session.size}")
+        StudyPrompt(item, vm, answer, { answer = it })
+        if (vm.hints > 0 && vm.feedback == null) {
+            Text("Hint: starts with “${item.term.first()}”; common pattern: ${item.phrase.replace(item.term, "____", ignoreCase = true)}")
+        }
+        if (vm.feedback == null) {
+            if (item.dimension == "PRODUCTION") Button(onClick = { vm.submit(answer) }, enabled = answer.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Check answer") }
+            OutlinedButton(onClick = vm::showHint, modifier = Modifier.fillMaxWidth()) { Text(if (vm.hints == 0) "Show hint" else "Another hint") }
+        } else {
+            Card(Modifier.fillMaxWidth()) { Text(vm.feedback!!, Modifier.padding(16.dp)) }
+            Button(onClick = vm::nextQuestion, modifier = Modifier.fillMaxWidth()) { Text("Continue") }
         }
     }
 }
 
-@Preview(showBackground = true)
 @Composable
-private fun AppPreview() = VocabApp(ProviderConfig(), {})
+private fun StudyPrompt(item: StudyItem, vm: AppViewModel, answer: String, onAnswer: (String) -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (item.dimension == "COMPREHENSION") {
+                Text(item.example, style = MaterialTheme.typography.titleLarge)
+                Text("What does “${item.term}” mean here?")
+                val choices = remember(item.id, vm.words) {
+                    (vm.words.map { it.definition }.filter { it != item.definition }.shuffled().take(2) + item.definition).shuffled()
+                }
+                choices.forEach { choice -> OutlinedButton(onClick = { vm.submit(choice) }, enabled = vm.feedback == null, modifier = Modifier.fillMaxWidth()) { Text(choice) } }
+            } else {
+                Text(item.definition, style = MaterialTheme.typography.titleLarge)
+                Text("Recall the English word. Context: ${item.example.replace(item.term, "____", ignoreCase = true)}")
+                OutlinedTextField(value = answer, onValueChange = onAnswer, modifier = Modifier.fillMaxWidth(), label = { Text("Your answer") }, singleLine = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatisticsScreen(vm: AppViewModel) {
+    val s = vm.statistics; val accuracy = if (s.attempts == 0) 0 else (s.correct * 100.0 / s.attempts).roundToInt()
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text("Statistics", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MetricCard("Attempts", s.attempts.toString(), Modifier.weight(1f)); MetricCard("Accuracy", "$accuracy%", Modifier.weight(1f))
+        }
+        StrengthCard("Comprehension", s.comprehensionStrength)
+        StrengthCard("Production", s.productionStrength)
+        Text("Strength is shown in estimated stable days. The two dimensions change only from their own practice evidence.")
+    }
+}
+
+@Composable private fun StrengthCard(label: String, strength: Double) {
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(label, style = MaterialTheme.typography.titleLarge); Text("%.1f stable days".format(strength), style = MaterialTheme.typography.headlineMedium) } }
+}
+
+@Composable private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(modifier) { Column(Modifier.padding(16.dp)) { Text(label); Text(value, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold) } }
+}
+
+@Composable
+private fun ProviderSettingsScreen(vm: AppViewModel) {
+    var baseUrl by remember(vm.providerConfig) { mutableStateOf(vm.providerConfig.baseUrl) }
+    var model by remember(vm.providerConfig) { mutableStateOf(vm.providerConfig.model) }
+    var key by remember(vm.providerConfig) { mutableStateOf(vm.providerConfig.apiKey) }
+    Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Settings", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+        Text("OpenAI-compatible provider")
+        OutlinedTextField(baseUrl, { baseUrl = it }, Modifier.fillMaxWidth(), label = { Text("HTTPS base URL") }, singleLine = true)
+        OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("Model") }, singleLine = true)
+        OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API key") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+        Text("The key is encrypted with Android Keystore and excluded from backups.", style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { vm.saveProvider(ProviderConfig(baseUrl, model, key)) }, modifier = Modifier.fillMaxWidth()) { Text("Save provider") }
+    }
+}

@@ -17,7 +17,6 @@ class OpenAiCompatibleClient(private val config: ProviderConfig) : MaterialGener
         val body = JSONObject()
             .put("model", config.model)
             .put("temperature", 0.7)
-            .put("response_format", JSONObject().put("type", "json_object"))
             .put(
                 "messages",
                 org.json.JSONArray()
