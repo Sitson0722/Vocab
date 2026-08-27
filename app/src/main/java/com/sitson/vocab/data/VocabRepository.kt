@@ -32,14 +32,14 @@ class VocabRepository(private val dao: VocabDao, private val scheduler: ReviewSc
         return dao.wordCount() > 0 && (materials < dao.wordCount() * 6 || dao.materialUsageCount() > materials * 3)
     }
 
-    suspend fun queue(review: Boolean, limit: Int = 20, style: String = ""): List<StudyItem> {
+    suspend fun queue(review: Boolean, limit: Int = 20, style: String = "", dimension: String = ""): List<StudyItem> {
         val now = System.currentTimeMillis()
-        val candidates = if (review) dao.reviewCandidates().sortedWith(
+        val candidates = if (review) dao.reviewCandidates().filter { dimension.isBlank() || it.dimension == dimension }.sortedWith(
             compareBy<ReviewCandidate> {
                 val elapsed = (now - it.lastReviewedAt).coerceAtLeast(0) / DAY
                 MemoryModel.retention(elapsed, it.stabilityDays)
             }.thenBy { it.mastery }.thenByDescending { it.difficulty }.thenBy { it.lastReviewedAt },
-        ).take(limit) else dao.newCandidates(limit)
+        ).take(limit) else dao.newCandidates(500).filter { dimension.isBlank() || it.dimension == dimension }.take(limit)
 
         val reserved = mutableSetOf<Long>()
         return candidates.mapNotNull { candidate ->

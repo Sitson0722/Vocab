@@ -14,11 +14,15 @@ import javax.crypto.spec.GCMParameterSpec
 class SecureProviderStore(context: Context) {
     private val preferences = context.getSharedPreferences("provider_settings", Context.MODE_PRIVATE)
 
-    fun load(): ProviderConfig = ProviderConfig(
-        baseUrl = preferences.getString("base_url", null) ?: ProviderConfig().baseUrl,
-        model = preferences.getString("model", null) ?: ProviderConfig().model,
-        apiKey = decrypt(preferences.getString("api_key", null)).orEmpty(),
-    )
+    fun load(): ProviderConfig {
+        val storedUrl = preferences.getString("base_url", null)
+        val storedModel = preferences.getString("model", null)
+        return ProviderConfig(
+            baseUrl = if (storedUrl == "https://api.deepseek.com/v1") ProviderConfig().baseUrl else storedUrl ?: ProviderConfig().baseUrl,
+            model = if (storedModel == "v4flash") ProviderConfig().model else storedModel ?: ProviderConfig().model,
+            apiKey = decrypt(preferences.getString("api_key", null)).orEmpty(),
+        )
+    }
 
     fun save(config: ProviderConfig) {
         val encryptedKey = encrypt(config.apiKey)

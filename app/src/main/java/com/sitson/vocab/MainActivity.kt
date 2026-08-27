@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -20,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -55,6 +57,10 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class AppTab(val label: String) { TODAY("Today"), WORDS("Words"), STATS("Statistics"), SETTINGS("Settings") }
+private enum class DimensionOption(val key: String, val label: String) {
+    ADAPTIVE("", "Adaptive"), CONTEXT("CONTEXT_COMPREHENSION", "New context"),
+    ISOLATED("ISOLATED_MEANING", "Word alone"), PRODUCTION("PRODUCTION", "Production"),
+}
 
 @Composable
 fun VocabApp(vm: AppViewModel = viewModel()) {
@@ -102,6 +108,10 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
     val stats = vm.statistics
     var reviewQuantity by remember { mutableStateOf("20") }
     var reviewStyle by remember { mutableStateOf("") }
+    var reviewDimension by remember { mutableStateOf(DimensionOption.ADAPTIVE) }
+    var reviewMode by remember { mutableStateOf(InteractionMode.FLASHCARD) }
+    var learnDimension by remember { mutableStateOf(DimensionOption.ADAPTIVE) }
+    var learnMode by remember { mutableStateOf(InteractionMode.FLASHCARD) }
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -131,8 +141,9 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
                         vm.materialStyles.take(3).forEach { style -> TextButton(onClick = { reviewStyle = style }) { Text(style) } }
                     }
                 }
+                SessionOptions(reviewDimension, { reviewDimension = it }, reviewMode, { reviewMode = it })
                 Button(
-                    onClick = { vm.startSession(true, reviewQuantity.toIntOrNull() ?: 20, reviewStyle.trim()) },
+                    onClick = { vm.startSession(true, reviewQuantity.toIntOrNull() ?: 20, reviewStyle.trim(), reviewDimension.key, reviewMode) },
                     enabled = stats.attempts > 0 && (reviewQuantity.toIntOrNull() ?: 0) > 0,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Start review now") }
@@ -142,10 +153,34 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Learn new words", style = MaterialTheme.typography.titleLarge)
                 Text("Introduces unpractised senses in context, then asks you to produce the word.")
-                Button(onClick = { vm.startSession(false) }, enabled = stats.words > 0, modifier = Modifier.fillMaxWidth()) { Text("Start new learning") }
+                SessionOptions(learnDimension, { learnDimension = it }, learnMode, { learnMode = it })
+                Button(onClick = { vm.startSession(false, dimension = learnDimension.key, mode = learnMode) }, enabled = stats.words > 0, modifier = Modifier.fillMaxWidth()) { Text("Start new learning") }
             }
         }
         if (stats.words == 0) OutlinedButton(onClick = onAddWords, modifier = Modifier.fillMaxWidth()) { Text("Add your first words") }
+    }
+}
+
+@Composable
+private fun SessionOptions(
+    dimension: DimensionOption,
+    onDimension: (DimensionOption) -> Unit,
+    mode: InteractionMode,
+    onMode: (InteractionMode) -> Unit,
+) {
+    Text("Dimension", style = MaterialTheme.typography.labelLarge)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            DimensionOption.entries.take(2).forEach { option -> FilterChip(selected = dimension == option, onClick = { onDimension(option) }, label = { Text(option.label) }) }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            DimensionOption.entries.drop(2).forEach { option -> FilterChip(selected = dimension == option, onClick = { onDimension(option) }, label = { Text(option.label) }) }
+        }
+    }
+    Text("Interaction", style = MaterialTheme.typography.labelLarge)
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        FilterChip(selected = mode == InteractionMode.FLASHCARD, onClick = { onMode(InteractionMode.FLASHCARD) }, label = { Text("Flashcard") })
+        FilterChip(selected = mode == InteractionMode.BILINGUAL, onClick = { onMode(InteractionMode.BILINGUAL) }, label = { Text("English ↔ Chinese") })
     }
 }
 
@@ -231,7 +266,7 @@ private fun RefreshMaterialsDialog(vm: AppViewModel, onDismiss: () -> Unit) {
 @Composable
 private fun StudyScreen(vm: AppViewModel) {
     val item = vm.currentItem ?: return
-    var answer by remember(item.id, item.dimension) { mutableStateOf("") }
+    var revealed by remember(item.id, item.dimension, vm.interactionMode) { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -249,14 +284,13 @@ private fun StudyScreen(vm: AppViewModel) {
         if (item.dimension != "PRODUCTION" || vm.feedback != null) {
             Text("${item.term}  ${item.phonetic}", style = MaterialTheme.typography.titleMedium)
         }
-        StudyPrompt(item, vm, answer, { answer = it })
-        if (vm.hints > 0 && vm.feedback == null) {
-            Text("Hint: starts with “${item.term.first()}”; common pattern: ${item.phrase.replace(item.term, "____", ignoreCase = true)}")
-        }
+        StudyPrompt(item, vm.interactionMode, revealed, onToggle = { revealed = !revealed })
         if (vm.feedback == null) {
-            if (item.dimension == "PRODUCTION") {
-                Button(onClick = { vm.submit(answer) }, enabled = answer.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Check answer") }
-                OutlinedButton(onClick = vm::showHint, modifier = Modifier.fillMaxWidth()) { Text(if (vm.hints == 0) "Show hint" else "Another hint") }
+            Text("Self-grade from memory. You may reveal the back first, or grade without revealing.")
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { vm.selfGrade("AGAIN") }, modifier = Modifier.weight(1f)) { Text("不会") }
+                OutlinedButton(onClick = { vm.selfGrade("HARD") }, modifier = Modifier.weight(1f)) { Text("困难") }
+                Button(onClick = { vm.selfGrade("KNOW") }, modifier = Modifier.weight(1f)) { Text("会") }
             }
         } else {
             Card(Modifier.fillMaxWidth()) { Text(vm.feedback!!, Modifier.padding(16.dp)) }
@@ -266,24 +300,34 @@ private fun StudyScreen(vm: AppViewModel) {
 }
 
 @Composable
-private fun StudyPrompt(item: StudyItem, vm: AppViewModel, answer: String, onAnswer: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
+private fun StudyPrompt(item: StudyItem, mode: InteractionMode, revealed: Boolean, onToggle: () -> Unit) {
+    Card(Modifier.fillMaxWidth().height(280.dp).clickable(onClick = onToggle)) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (item.dimension != "PRODUCTION") {
-                if (item.dimension == "CONTEXT_COMPREHENSION") {
-                    Text(item.materialContent, style = MaterialTheme.typography.titleLarge)
-                    Text("Fresh ${item.materialType.lowercase()} · ${item.styleTags}", style = MaterialTheme.typography.labelMedium)
+            Text(if (mode == InteractionMode.BILINGUAL) "English ↔ Chinese" else item.materialType.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge)
+            if (!revealed) {
+                when (item.dimension) {
+                    "CONTEXT_COMPREHENSION" -> {
+                        Text(item.materialContent, style = MaterialTheme.typography.titleLarge)
+                        Text("What does “${item.term}” mean in this new context?")
+                    }
+                    "ISOLATED_MEANING" -> {
+                        Text(item.term, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                        Text(item.phonetic)
+                        Text("Recall its meaning without contextual help.")
+                    }
+                    else -> {
+                        Text(item.definition, style = MaterialTheme.typography.headlineMedium)
+                        if (mode == InteractionMode.FLASHCARD) Text("Clue: ${item.materialContent.replace(item.term, "____", ignoreCase = true)}")
+                        Text("Recall the English word or phrase.")
+                    }
                 }
-                Text(if (item.dimension == "CONTEXT_COMPREHENSION") "What does “${item.term}” mean here?" else "What does this word mean on its own?")
-                val choices = remember(item.id, vm.words) {
-                    (vm.words.map { it.definition }.filter { it != item.definition }.shuffled().take(2) + item.definition).shuffled()
-                }
-                choices.forEach { choice -> OutlinedButton(onClick = { vm.submit(choice) }, enabled = vm.feedback == null, modifier = Modifier.fillMaxWidth()) { Text(choice) } }
+                Spacer(Modifier.weight(1f)); Text("Tap card to reveal answer", color = MaterialTheme.colorScheme.primary)
             } else {
+                Text("${item.term}  ${item.phonetic}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                 Text(item.definition, style = MaterialTheme.typography.titleLarge)
-                Text("Express this meaning using the target word or phrase.")
-                Text("Clue (${item.materialType.lowercase()}, ${item.styleTags}): ${item.materialContent.replace(item.term, "____", ignoreCase = true)}")
-                OutlinedTextField(value = answer, onValueChange = onAnswer, modifier = Modifier.fillMaxWidth(), label = { Text("Your answer") }, singleLine = true)
+                Text(item.phrase, color = MaterialTheme.colorScheme.primary)
+                if (mode == InteractionMode.FLASHCARD) Text(item.materialExplanation.ifBlank { item.example })
+                Spacer(Modifier.weight(1f)); Text("Tap card to hide answer", color = MaterialTheme.colorScheme.primary)
             }
         }
     }
@@ -305,7 +349,7 @@ private fun StatisticsScreen(vm: AppViewModel) {
 }
 
 @Composable private fun StrengthCard(label: String, strength: Double, mastery: Double, retention: Double) {
-    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(label, style = MaterialTheme.typography.titleLarge); Text("Memory now: ${(retention * 100).roundToInt()}%", style = MaterialTheme.typography.headlineMedium); Text("Mastery: ${(mastery * 100).roundToInt()}% · %.1f stable days".format(strength)) } }
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(label, style = MaterialTheme.typography.titleLarge); Text("Memory now: ${(retention * 100).roundToInt()}%", style = MaterialTheme.typography.headlineMedium); Text("Mastery: ${(mastery * 100).roundToInt()}% · ${"%.1f".format(strength)} stable days") } }
 }
 
 @Composable private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {

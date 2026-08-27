@@ -1,8 +1,8 @@
 package com.sitson.vocab.provider
 
 data class ProviderConfig(
-    val baseUrl: String = "https://api.deepseek.com/v1",
-    val model: String = "v4flash",
+    val baseUrl: String = "https://api.deepseek.com",
+    val model: String = "deepseek-v4-flash",
     val apiKey: String = "",
 )
 

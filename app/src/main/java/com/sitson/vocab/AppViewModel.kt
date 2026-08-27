@@ -19,6 +19,8 @@ import com.sitson.vocab.provider.ProviderConfigValidator
 import com.sitson.vocab.provider.SecureProviderStore
 import kotlinx.coroutines.launch
 
+enum class InteractionMode { FLASHCARD, BILINGUAL }
+
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = VocabRepository(VocabDatabase.get(application).dao())
     private val providerStore = SecureProviderStore(application)
@@ -33,6 +35,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var sessionIndex by mutableStateOf(0); private set
     var feedback by mutableStateOf<String?>(null); private set
     var hints by mutableStateOf(0); private set
+    var interactionMode by mutableStateOf(InteractionMode.FLASHCARD); private set
     private var questionStarted = 0L
 
     val currentItem get() = session.getOrNull(sessionIndex)
@@ -101,14 +104,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         providerStore.save(config); providerConfig = config; message = "Provider saved securely."; return true
     }
 
-    fun startSession(review: Boolean, quantity: Int = 20, style: String = "") = viewModelScope.launch {
-        if (review && repository.shouldRefreshMaterials() && ProviderConfigValidator.validate(providerConfig) == null) {
-            refreshMaterialsInternal(style, announce = false)
-        }
-        session = repository.queue(review, quantity.coerceIn(1, 500), style)
+    fun startSession(
+        review: Boolean,
+        quantity: Int = 20,
+        style: String = "",
+        dimension: String = "",
+        mode: InteractionMode = InteractionMode.FLASHCARD,
+    ) = viewModelScope.launch {
+        interactionMode = mode
+        session = repository.queue(review, quantity.coerceIn(1, 500), style, dimension)
         sessionIndex = 0; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
         if (session.isEmpty()) message = if (review) "No studied items match this material style yet." else "Add words before starting a learning session."
         else repository.recordMaterialShown(session.first())
+        if (review && repository.shouldRefreshMaterials() && ProviderConfigValidator.validate(providerConfig) == null) {
+            // Never delay the local session for network generation.
+            viewModelScope.launch { refreshMaterialsInternal(style, announce = false) }
+        }
     }
 
     fun showHint() { if (feedback == null) hints++ }
@@ -122,6 +133,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             else normalized == item.term.lowercase() || normalized == item.phrase.lowercase()
         repository.grade(item, correct, hints, System.currentTimeMillis() - questionStarted, answer)
         feedback = if (correct) "Correct — ${item.term}: ${item.definition}" else "Answer: $target\n${item.phrase}\n${item.example}"
+        statistics = repository.statistics()
+    }
+
+    fun selfGrade(rating: String) = viewModelScope.launch {
+        val item = currentItem ?: return@launch
+        if (feedback != null) return@launch
+        val correct = rating != "AGAIN"
+        val effortPenalty = if (rating == "HARD") 1 else 0
+        repository.grade(item, correct, effortPenalty, System.currentTimeMillis() - questionStarted, "SELF_$rating")
+        feedback = when (rating) {
+            "AGAIN" -> "Marked not known. This item will return sooner."
+            "HARD" -> "Marked difficult. The interval grows cautiously."
+            else -> "Marked known."
+        }
         statistics = repository.statistics()
     }
 

@@ -6,6 +6,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProviderConfigValidatorTest {
+    @Test fun `defaults to official DeepSeek v4 flash identifiers`() {
+        assertEquals("https://api.deepseek.com", ProviderConfig().baseUrl)
+        assertEquals("deepseek-v4-flash", ProviderConfig().model)
+    }
+
     @Test fun `accepts an HTTPS OpenAI compatible endpoint`() {
         assertNull(ProviderConfigValidator.validate(ProviderConfig("https://example.com/v1", "model-a", "secret")))
     }

@@ -27,5 +27,11 @@ usage logs. AI can replenish this library automatically or manually in a request
 can filter by previously generated style. DeepSeek (`https://api.deepseek.com/v1`) and `v4flash` are
 the defaults while the provider remains OpenAI-compatible and replaceable.
 
+Version 0.5 fixes the statistics crash and makes review startup local-first. AI replenishment now
+runs in the background. Choice questions are replaced by reveal-optional, self-graded flashcards,
+with an additional conventional English-Chinese card mode. Before learning or review, users can
+select adaptive/context/isolated/production dimensions and either interaction mode. DeepSeek now
+defaults to `https://api.deepseek.com` with model `deepseek-v4-flash`.
+
 No API keys or signing material belong in the repository. Provider configuration and release-secret
 names will be documented when those integrations land.
