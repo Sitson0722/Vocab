@@ -22,11 +22,19 @@ class ReviewScheduler {
 
         val difficulty = (previous.difficulty + if (grade.correct) -0.04 * quality else 0.12)
             .coerceIn(0.1, 0.95)
+        val diversityWeight = if (grade.novelMaterial) 1.0 else 0.2
+        val masteryGain = quality * diversityWeight * (0.05 + spacingEvidence) * (1.0 - previous.mastery) * 0.55
+        val evidenceCount = previous.distinctMaterials + if (grade.novelMaterial) 1 else 0
+        val evidenceCap = when (evidenceCount) { 0 -> 0.35; 1 -> 0.55; 2 -> 0.75; else -> 1.0 }
+        val mastery = if (grade.correct) min(evidenceCap, previous.mastery + masteryGain)
+            else max(0.0, previous.mastery - 0.08 * (0.5 + retrievability))
         val state = previous.copy(
             stabilityDays = stability,
             difficulty = difficulty,
             consecutiveSuccesses = if (grade.correct) previous.consecutiveSuccesses + 1 else 0,
             lapses = previous.lapses + if (grade.correct) 0 else 1,
+            mastery = mastery,
+            distinctMaterials = evidenceCount,
         )
         // Failed items return soon, but never enter a rapid-fire loop.
         // Productive recall is harder and receives a deliberately shorter interval for equal evidence.

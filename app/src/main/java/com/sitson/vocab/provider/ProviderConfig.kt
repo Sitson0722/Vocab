@@ -1,8 +1,8 @@
 package com.sitson.vocab.provider
 
 data class ProviderConfig(
-    val baseUrl: String = "https://api.openai.com/v1",
-    val model: String = "gpt-4.1-mini",
+    val baseUrl: String = "https://api.deepseek.com/v1",
+    val model: String = "v4flash",
     val apiKey: String = "",
 )
 

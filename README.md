@@ -20,5 +20,12 @@ all previously studied items by predicted retention, difficulty, and time since 
 growth is spacing-sensitive, so immediate repetition provides much less long-term evidence than a
 successful delayed retrieval.
 
+Version 0.4 separates new-context comprehension, isolated word meaning, and active production into
+three independent memory/mastery models. A typed material library stores sentences, phrases,
+collocations, and diagnostic proper nouns with fingerprints, style tags, provenance, and per-display
+usage logs. AI can replenish this library automatically or manually in a requested style, and review
+can filter by previously generated style. DeepSeek (`https://api.deepseek.com/v1`) and `v4flash` are
+the defaults while the provider remains OpenAI-compatible and replaceable.
+
 No API keys or signing material belong in the repository. Provider configuration and release-secret
 names will be documented when those integrations land.

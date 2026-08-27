@@ -24,7 +24,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val providerStore = SecureProviderStore(application)
 
     var words by mutableStateOf<List<WordSenseEntity>>(emptyList()); private set
-    var statistics by mutableStateOf(AppStatistics(0, 0, 0, 0, 0.0, 0.0)); private set
+    var statistics by mutableStateOf(AppStatistics(0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)); private set
+    var materialStyles by mutableStateOf<List<String>>(emptyList()); private set
     var providerConfig by mutableStateOf(providerStore.load()); private set
     var message by mutableStateOf<String?>(null); private set
     var busy by mutableStateOf(false); private set
@@ -41,17 +42,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun refresh() = viewModelScope.launch {
         words = repository.words()
         statistics = repository.statistics()
+        materialStyles = repository.styles()
     }
 
     fun clearMessage() { message = null }
 
-    fun importFixed(text: String) = viewModelScope.launch {
+    fun importFixed(text: String, style: String) = viewModelScope.launch {
         runCatching { WordImporter.fixedFormat(text) }
-            .onSuccess { importWords(it) }
+            .onSuccess { importWords(it, style) }
             .onFailure { message = it.message ?: "The import could not be parsed." }
     }
 
-    fun importWithAi(text: String) = viewModelScope.launch {
+    fun importWithAi(text: String, style: String) = viewModelScope.launch {
         val validation = ProviderConfigValidator.validate(providerConfig)
         if (validation != null) { message = "Configure AI first: $validation"; return@launch }
         if (text.isBlank()) { message = "Paste some text to extract vocabulary from."; return@launch }
@@ -59,19 +61,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         runCatching {
             val response = OpenAiCompatibleClient(providerConfig).generate(
                 "You are a precise vocabulary lexicographer. Follow the requested JSON schema.",
-                WordImporter.aiPrompt(text),
+                WordImporter.aiPrompt(text, style),
             )
             WordImporter.aiJson(response)
-        }.onSuccess { importWords(it) }
+        }.onSuccess { importWords(it, style) }
             .onFailure { message = "AI import failed: ${it.message}" }
         busy = false
     }
 
-    private suspend fun importWords(items: List<ImportedWord>) {
-        val (added, duplicates) = repository.import(items)
+    private suspend fun importWords(items: List<ImportedWord>, style: String) {
+        val (added, duplicates) = repository.import(items, style)
         message = "Added $added sense${if (added == 1) "" else "s"}. Skipped $duplicates duplicate${if (duplicates == 1) "" else "s"}."
         words = repository.words()
         statistics = repository.statistics()
+        materialStyles = repository.styles()
+    }
+
+    fun refreshMaterials(style: String) = viewModelScope.launch { refreshMaterialsInternal(style, announce = true) }
+
+    private suspend fun refreshMaterialsInternal(style: String, announce: Boolean) {
+        ProviderConfigValidator.validate(providerConfig)?.let { if (announce) message = "Configure AI first: $it"; return }
+        if (words.isEmpty()) { if (announce) message = "Add words before generating materials."; return }
+        busy = true
+        runCatching {
+            val response = OpenAiCompatibleClient(providerConfig).generate(
+                "You create varied, unambiguous vocabulary-learning material as strict JSON.",
+                com.sitson.vocab.data.MaterialImporter.prompt(words.take(30), style),
+            )
+            repository.addGeneratedMaterials(com.sitson.vocab.data.MaterialImporter.parse(response))
+        }.onSuccess { (accepted, rejected) ->
+            if (announce) message = "Added $accepted fresh materials; rejected $rejected invalid or duplicate items."
+            materialStyles = repository.styles()
+        }.onFailure { if (announce) message = "Material refresh failed: ${it.message}" }
+        busy = false
     }
 
     fun saveProvider(config: ProviderConfig): Boolean {
@@ -79,10 +101,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         providerStore.save(config); providerConfig = config; message = "Provider saved securely."; return true
     }
 
-    fun startSession(review: Boolean, quantity: Int = 20) = viewModelScope.launch {
-        session = repository.queue(review, quantity.coerceIn(1, 500))
+    fun startSession(review: Boolean, quantity: Int = 20, style: String = "") = viewModelScope.launch {
+        if (review && repository.shouldRefreshMaterials() && ProviderConfigValidator.validate(providerConfig) == null) {
+            refreshMaterialsInternal(style, announce = false)
+        }
+        session = repository.queue(review, quantity.coerceIn(1, 500), style)
         sessionIndex = 0; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
-        if (session.isEmpty()) message = if (review) "Nothing is due yet." else "Add words before starting a learning session."
+        if (session.isEmpty()) message = if (review) "No studied items match this material style yet." else "Add words before starting a learning session."
+        else repository.recordMaterialShown(session.first())
     }
 
     fun showHint() { if (feedback == null) hints++ }
@@ -91,8 +117,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val item = currentItem ?: return@launch
         if (feedback != null) return@launch
         val normalized = answer.trim().lowercase().replace(Regex("[^a-z0-9' -]"), "")
-        val target = if (item.dimension == "COMPREHENSION") item.definition else item.term
-        val correct = if (item.dimension == "COMPREHENSION") answer == item.definition
+        val target = if (item.dimension != "PRODUCTION") item.definition else item.term
+        val correct = if (item.dimension != "PRODUCTION") answer == item.definition
             else normalized == item.term.lowercase() || normalized == item.phrase.lowercase()
         repository.grade(item, correct, hints, System.currentTimeMillis() - questionStarted, answer)
         feedback = if (correct) "Correct — ${item.term}: ${item.definition}" else "Answer: $target\n${item.phrase}\n${item.example}"
@@ -102,6 +128,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun nextQuestion() {
         if (sessionIndex + 1 >= session.size) { session = emptyList(); sessionIndex = 0; message = "Session complete."; refresh(); return }
         sessionIndex++; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
+        viewModelScope.launch { currentItem?.let { repository.recordMaterialShown(it) } }
     }
 
     fun leaveSession() { session = emptyList(); sessionIndex = 0; feedback = null }

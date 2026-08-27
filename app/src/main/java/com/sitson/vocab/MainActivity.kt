@@ -101,6 +101,7 @@ private fun Notice(message: String, dismiss: () -> Unit) {
 private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
     val stats = vm.statistics
     var reviewQuantity by remember { mutableStateOf("20") }
+    var reviewStyle by remember { mutableStateOf("") }
     Column(
         Modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -121,8 +122,17 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(), label = { Text("How many to review") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true,
                 )
+                OutlinedTextField(
+                    value = reviewStyle, onValueChange = { reviewStyle = it }, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Material style (optional)") }, placeholder = { Text("science, romance…") }, singleLine = true,
+                )
+                if (vm.materialStyles.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        vm.materialStyles.take(3).forEach { style -> TextButton(onClick = { reviewStyle = style }) { Text(style) } }
+                    }
+                }
                 Button(
-                    onClick = { vm.startSession(true, reviewQuantity.toIntOrNull() ?: 20) },
+                    onClick = { vm.startSession(true, reviewQuantity.toIntOrNull() ?: 20, reviewStyle.trim()) },
                     enabled = stats.attempts > 0 && (reviewQuantity.toIntOrNull() ?: 0) > 0,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Start review now") }
@@ -142,10 +152,14 @@ private fun TodayScreen(vm: AppViewModel, onAddWords: () -> Unit) {
 @Composable
 private fun WordsScreen(vm: AppViewModel) {
     var showImport by remember { mutableStateOf(false) }
+    var showRefresh by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(20.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Column { Text("Words", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Text("${vm.words.size} distinct senses") }
-            Button(onClick = { showImport = true }) { Text("Add") }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(onClick = { showRefresh = true }, enabled = vm.words.isNotEmpty()) { Text("Refresh") }
+                Button(onClick = { showImport = true }) { Text("Add") }
+            }
         }
         Spacer(Modifier.height(12.dp))
         if (vm.words.isEmpty()) Text("No vocabulary yet. Tap Add to paste a list or extract words with AI.")
@@ -164,11 +178,13 @@ private fun WordsScreen(vm: AppViewModel) {
         }
     }
     if (showImport) ImportDialog(vm, onDismiss = { showImport = false })
+    if (showRefresh) RefreshMaterialsDialog(vm, onDismiss = { showRefresh = false })
 }
 
 @Composable
 private fun ImportDialog(vm: AppViewModel, onDismiss: () -> Unit) {
     var text by remember { mutableStateOf("") }
+    var style by remember { mutableStateOf("general") }
     AlertDialog(
         onDismissRequest = { if (!vm.busy) onDismiss() },
         title = { Text("Import vocabulary") },
@@ -181,16 +197,33 @@ private fun ImportDialog(vm: AppViewModel, onDismiss: () -> Unit) {
                     minLines = 7, label = { Text("Vocabulary list or any source text") },
                     placeholder = { Text("subtle | /ˈsʌtəl/ | 细微而不易察觉的 | subtle difference | There is a subtle difference between them.") },
                 )
+                OutlinedTextField(style, { style = it }, Modifier.fillMaxWidth(), label = { Text("Material style") }, placeholder = { Text("science, romance, academic…") }, singleLine = true)
                 Text("Fixed-format import stays offline. AI import sends this text to your configured provider and extracts separate senses, collocations, and examples.", style = MaterialTheme.typography.bodySmall)
                 if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         },
         confirmButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { vm.importFixed(text); onDismiss() }, enabled = !vm.busy) { Text("Import fixed") }
-                Button(onClick = { vm.importWithAi(text) }, enabled = !vm.busy) { Text("Import with AI") }
+                OutlinedButton(onClick = { vm.importFixed(text, style); onDismiss() }, enabled = !vm.busy) { Text("Import fixed") }
+                Button(onClick = { vm.importWithAi(text, style) }, enabled = !vm.busy) { Text("Import with AI") }
             }
         },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !vm.busy) { Text("Close") } },
+    )
+}
+
+@Composable
+private fun RefreshMaterialsDialog(vm: AppViewModel, onDismiss: () -> Unit) {
+    var style by remember { mutableStateOf("general") }
+    AlertDialog(
+        onDismissRequest = { if (!vm.busy) onDismiss() },
+        title = { Text("Refresh material library") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("AI will add new sentences, phrases, collocations, and diagnostic proper nouns. Existing material and usage history are preserved.")
+            OutlinedTextField(style, { style = it }, Modifier.fillMaxWidth(), label = { Text("Style keywords") }, placeholder = { Text("science, romance…") }, singleLine = true)
+            if (vm.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        } },
+        confirmButton = { Button(onClick = { vm.refreshMaterials(style) }, enabled = !vm.busy && style.isNotBlank()) { Text("Generate") } },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !vm.busy) { Text("Close") } },
     )
 }
@@ -204,12 +237,16 @@ private fun StudyScreen(vm: AppViewModel) {
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(if (item.dimension == "COMPREHENSION") "Understand" else "Active recall", style = MaterialTheme.typography.titleLarge)
+            Text(when (item.dimension) {
+                "CONTEXT_COMPREHENSION" -> "Understand in a new context"
+                "ISOLATED_MEANING" -> "Know the word itself"
+                else -> "Active recall"
+            }, style = MaterialTheme.typography.titleLarge)
             TextButton(onClick = vm::leaveSession) { Text("Exit") }
         }
         LinearProgressIndicator(progress = { (vm.sessionIndex + 1f) / vm.session.size }, modifier = Modifier.fillMaxWidth())
         Text("${vm.sessionIndex + 1} of ${vm.session.size}")
-        if (item.dimension == "COMPREHENSION" || vm.feedback != null) {
+        if (item.dimension != "PRODUCTION" || vm.feedback != null) {
             Text("${item.term}  ${item.phonetic}", style = MaterialTheme.typography.titleMedium)
         }
         StudyPrompt(item, vm, answer, { answer = it })
@@ -217,8 +254,10 @@ private fun StudyScreen(vm: AppViewModel) {
             Text("Hint: starts with “${item.term.first()}”; common pattern: ${item.phrase.replace(item.term, "____", ignoreCase = true)}")
         }
         if (vm.feedback == null) {
-            if (item.dimension == "PRODUCTION") Button(onClick = { vm.submit(answer) }, enabled = answer.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Check answer") }
-            OutlinedButton(onClick = vm::showHint, modifier = Modifier.fillMaxWidth()) { Text(if (vm.hints == 0) "Show hint" else "Another hint") }
+            if (item.dimension == "PRODUCTION") {
+                Button(onClick = { vm.submit(answer) }, enabled = answer.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Check answer") }
+                OutlinedButton(onClick = vm::showHint, modifier = Modifier.fillMaxWidth()) { Text(if (vm.hints == 0) "Show hint" else "Another hint") }
+            }
         } else {
             Card(Modifier.fillMaxWidth()) { Text(vm.feedback!!, Modifier.padding(16.dp)) }
             Button(onClick = vm::nextQuestion, modifier = Modifier.fillMaxWidth()) { Text("Continue") }
@@ -230,16 +269,20 @@ private fun StudyScreen(vm: AppViewModel) {
 private fun StudyPrompt(item: StudyItem, vm: AppViewModel, answer: String, onAnswer: (String) -> Unit) {
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (item.dimension == "COMPREHENSION") {
-                Text(item.example, style = MaterialTheme.typography.titleLarge)
-                Text("What does “${item.term}” mean here?")
+            if (item.dimension != "PRODUCTION") {
+                if (item.dimension == "CONTEXT_COMPREHENSION") {
+                    Text(item.materialContent, style = MaterialTheme.typography.titleLarge)
+                    Text("Fresh ${item.materialType.lowercase()} · ${item.styleTags}", style = MaterialTheme.typography.labelMedium)
+                }
+                Text(if (item.dimension == "CONTEXT_COMPREHENSION") "What does “${item.term}” mean here?" else "What does this word mean on its own?")
                 val choices = remember(item.id, vm.words) {
                     (vm.words.map { it.definition }.filter { it != item.definition }.shuffled().take(2) + item.definition).shuffled()
                 }
                 choices.forEach { choice -> OutlinedButton(onClick = { vm.submit(choice) }, enabled = vm.feedback == null, modifier = Modifier.fillMaxWidth()) { Text(choice) } }
             } else {
                 Text(item.definition, style = MaterialTheme.typography.titleLarge)
-                Text("Recall the English word. Context: ${item.example.replace(item.term, "____", ignoreCase = true)}")
+                Text("Express this meaning using the target word or phrase.")
+                Text("Clue (${item.materialType.lowercase()}, ${item.styleTags}): ${item.materialContent.replace(item.term, "____", ignoreCase = true)}")
                 OutlinedTextField(value = answer, onValueChange = onAnswer, modifier = Modifier.fillMaxWidth(), label = { Text("Your answer") }, singleLine = true)
             }
         }
@@ -254,14 +297,15 @@ private fun StatisticsScreen(vm: AppViewModel) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             MetricCard("Attempts", s.attempts.toString(), Modifier.weight(1f)); MetricCard("Accuracy", "$accuracy%", Modifier.weight(1f))
         }
-        StrengthCard("Comprehension", s.comprehensionStrength)
-        StrengthCard("Production", s.productionStrength)
-        Text("Strength is shown in estimated stable days. The two dimensions change only from their own practice evidence.")
+        StrengthCard("New-context comprehension", s.contextualStrength, s.contextualMastery, s.contextualRetention)
+        StrengthCard("Isolated word meaning", s.isolatedStrength, s.isolatedMastery, s.isolatedRetention)
+        StrengthCard("Active production", s.productionStrength, s.productionMastery, s.productionRetention)
+        Text("Memory rate decays with time. Mastery additionally requires successful evidence across different materials; each dimension changes independently.")
     }
 }
 
-@Composable private fun StrengthCard(label: String, strength: Double) {
-    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(label, style = MaterialTheme.typography.titleLarge); Text("%.1f stable days".format(strength), style = MaterialTheme.typography.headlineMedium) } }
+@Composable private fun StrengthCard(label: String, strength: Double, mastery: Double, retention: Double) {
+    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp)) { Text(label, style = MaterialTheme.typography.titleLarge); Text("Memory now: ${(retention * 100).roundToInt()}%", style = MaterialTheme.typography.headlineMedium); Text("Mastery: ${(mastery * 100).roundToInt()}% · %.1f stable days".format(strength)) } }
 }
 
 @Composable private fun MetricCard(label: String, value: String, modifier: Modifier = Modifier) {

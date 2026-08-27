@@ -1,6 +1,6 @@
 package com.sitson.vocab.domain
 
-enum class MasteryDimension { COMPREHENSION, PRODUCTION }
+enum class MasteryDimension { CONTEXT_COMPREHENSION, ISOLATED_MEANING, PRODUCTION }
 
 data class ReviewState(
     val dimension: MasteryDimension,
@@ -8,6 +8,8 @@ data class ReviewState(
     val difficulty: Double = 0.5,
     val consecutiveSuccesses: Int = 0,
     val lapses: Int = 0,
+    val mastery: Double = 0.0,
+    val distinctMaterials: Int = 0,
 )
 
 data class AttemptGrade(
@@ -15,6 +17,7 @@ data class AttemptGrade(
     val hintsUsed: Int = 0,
     val responseMillis: Long = 0,
     val elapsedDays: Double = 0.0,
+    val novelMaterial: Boolean = false,
 )
 
 data class ReviewDecision(
