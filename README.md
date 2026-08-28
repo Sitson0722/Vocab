@@ -1,5 +1,11 @@
 # Vocab
 
+## 0.7.0
+
+- Long flashcards can be scrolled vertically without leaving the study screen.
+- Settings can export and transactionally restore a versioned JSON backup containing all vocabulary, progress, corpus, usage and attempt history, provider settings, and API key.
+- API keys remain encrypted by Android Keystore in app storage; exported backup files contain the key in plain text and must be kept private.
+
 An offline-first Android vocabulary learner that tracks comprehension and production separately,
 uses varied contextual material, and schedules retrieval with a deterministic local engine.
 

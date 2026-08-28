@@ -1,12 +1,14 @@
 package com.sitson.vocab
 
 import android.app.Application
+import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sitson.vocab.data.AppStatistics
+import com.sitson.vocab.data.BackupManager
 import com.sitson.vocab.data.ImportedWord
 import com.sitson.vocab.data.StudyItem
 import com.sitson.vocab.data.VocabDatabase
@@ -18,11 +20,14 @@ import com.sitson.vocab.provider.ProviderConfig
 import com.sitson.vocab.provider.ProviderConfigValidator
 import com.sitson.vocab.provider.SecureProviderStore
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class InteractionMode { FLASHCARD, BILINGUAL }
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = VocabRepository(VocabDatabase.get(application).dao())
+    private val backupManager = BackupManager(VocabDatabase.get(application).dao())
     private val providerStore = SecureProviderStore(application)
 
     var words by mutableStateOf<List<WordSenseEntity>>(emptyList()); private set
@@ -114,6 +119,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProvider(config: ProviderConfig): Boolean {
         ProviderConfigValidator.validate(config)?.let { message = it; return false }
         providerStore.save(config); providerConfig = config; message = "Provider saved securely."; return true
+    }
+
+    fun exportBackup(uri: Uri) = viewModelScope.launch {
+        busy = true
+        runCatching {
+            val json = backupManager.export(providerConfig)
+            withContext(Dispatchers.IO) {
+                getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(json) }
+                    ?: error("The selected file could not be opened.")
+            }
+        }.onSuccess { message = "Full backup saved. It contains your API key—store it securely." }
+            .onFailure { message = "Backup failed: ${it.message}" }
+        busy = false
+    }
+
+    fun restoreBackup(uri: Uri) = viewModelScope.launch {
+        busy = true
+        runCatching {
+            val json = withContext(Dispatchers.IO) {
+                getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                    ?: error("The selected file could not be opened.")
+            }
+            require(json.length <= 25_000_000) { "Backup is larger than the supported 25 MB limit." }
+            val backup = backupManager.restore(json)
+            providerStore.save(backup.provider)
+            providerConfig = backup.provider
+            session = emptyList()
+            refresh()
+            backup.words.size
+        }.onSuccess { message = "Restore complete: $it vocabulary senses and all learning history restored." }
+            .onFailure { message = "Restore failed; existing data was kept: ${it.message}" }
+        busy = false
     }
 
     fun startSession(

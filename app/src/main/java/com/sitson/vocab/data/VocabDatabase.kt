@@ -152,10 +152,19 @@ interface VocabDao {
     @Insert suspend fun insertUsage(usage: MaterialUsageEntity)
 
     @Insert suspend fun insertAttempt(attempt: AttemptEntity)
+    @Insert suspend fun insertWordsForRestore(words: List<WordSenseEntity>)
+    @Insert suspend fun insertProgressForRestore(progress: List<ProgressEntity>)
+    @Insert suspend fun insertMaterialsForRestore(materials: List<MaterialEntity>)
+    @Insert suspend fun insertUsagesForRestore(usages: List<MaterialUsageEntity>)
+    @Insert suspend fun insertAttemptsForRestore(attempts: List<AttemptEntity>)
     @Query("UPDATE ProgressEntity SET stabilityDays=:stability, difficulty=:difficulty, consecutiveSuccesses=:successes, lapses=:lapses, dueAt=:dueAt, lastReviewedAt=:reviewedAt, attempts=attempts+1, mastery=:mastery, distinctMaterials=:distinctMaterials WHERE wordId=:wordId AND dimension=:dimension")
     suspend fun updateProgress(wordId: Long, dimension: String, stability: Double, difficulty: Double, successes: Int, lapses: Int, dueAt: Long, reviewedAt: Long, mastery: Double, distinctMaterials: Int)
 
     @Query("SELECT * FROM WordSenseEntity ORDER BY term, definition") suspend fun words(): List<WordSenseEntity>
+    @Query("SELECT * FROM ProgressEntity") suspend fun allProgress(): List<ProgressEntity>
+    @Query("SELECT * FROM MaterialEntity") suspend fun allMaterials(): List<MaterialEntity>
+    @Query("SELECT * FROM MaterialUsageEntity") suspend fun allUsages(): List<MaterialUsageEntity>
+    @Query("SELECT * FROM AttemptEntity") suspend fun allAttempts(): List<AttemptEntity>
     @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId AND dimension=:dimension") suspend fun progress(wordId: Long, dimension: String): ProgressEntity
     @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId") suspend fun progressForWord(wordId: Long): List<ProgressEntity>
     @Query("SELECT w.id,w.term,w.phonetic,w.definition,w.phrase,w.example,p.dimension,p.dueAt,p.lastReviewedAt,p.stabilityDays,p.difficulty,p.attempts,p.mastery,p.distinctMaterials FROM WordSenseEntity w JOIN ProgressEntity p ON p.wordId=w.id WHERE p.attempts>0")
@@ -177,6 +186,25 @@ interface VocabDao {
     @Query("SELECT COALESCE(AVG(mastery),0) FROM ProgressEntity WHERE dimension=:dimension") suspend fun averageMastery(dimension: String): Double
     @Query("SELECT COUNT(DISTINCT m.id) FROM MaterialEntity m JOIN MaterialUsageEntity u ON u.materialId=m.id WHERE m.wordId=:wordId") suspend fun distinctUsedMaterials(wordId: Long): Int
     @Query("UPDATE WordSenseEntity SET status='MASTERED', masteredAt=:masteredAt WHERE id=:wordId") suspend fun markMastered(wordId: Long, masteredAt: Long)
+
+    @Query("DELETE FROM MaterialUsageEntity") suspend fun clearUsages()
+    @Query("DELETE FROM AttemptEntity") suspend fun clearAttempts()
+    @Query("DELETE FROM MaterialEntity") suspend fun clearMaterials()
+    @Query("DELETE FROM ProgressEntity") suspend fun clearProgress()
+    @Query("DELETE FROM WordSenseEntity") suspend fun clearWords()
+
+    @Transaction
+    suspend fun restoreAll(
+        words: List<WordSenseEntity>, progress: List<ProgressEntity>, materials: List<MaterialEntity>,
+        usages: List<MaterialUsageEntity>, attempts: List<AttemptEntity>,
+    ) {
+        clearUsages(); clearAttempts(); clearMaterials(); clearProgress(); clearWords()
+        if (words.isNotEmpty()) insertWordsForRestore(words)
+        if (progress.isNotEmpty()) insertProgressForRestore(progress)
+        if (materials.isNotEmpty()) insertMaterialsForRestore(materials)
+        if (usages.isNotEmpty()) insertUsagesForRestore(usages)
+        if (attempts.isNotEmpty()) insertAttemptsForRestore(attempts)
+    }
 
     @Transaction
     suspend fun addWordWithProgress(word: WordSenseEntity): Long {

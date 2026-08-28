@@ -2,7 +2,9 @@ package com.sitson.vocab
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -315,8 +317,11 @@ private fun StudyScreen(vm: AppViewModel) {
 
 @Composable
 private fun StudyPrompt(item: StudyItem, mode: InteractionMode, revealed: Boolean, onToggle: () -> Unit) {
-    Card(Modifier.fillMaxWidth().height(280.dp).clickable(onClick = onToggle)) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Card(Modifier.fillMaxWidth().height(280.dp)) {
+        Column(
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).clickable(onClick = onToggle).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Text(if (mode == InteractionMode.BILINGUAL) "English ↔ Chinese" else item.materialType.lowercase().replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelLarge)
             if (!revealed) {
                 if (mode == InteractionMode.BILINGUAL) {
@@ -345,7 +350,7 @@ private fun StudyPrompt(item: StudyItem, mode: InteractionMode, revealed: Boolea
                         Text("Recall the English word or phrase.")
                     }
                 }
-                Spacer(Modifier.weight(1f)); Text("Tap card to reveal answer", color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(12.dp)); Text("Tap card to reveal answer · Swipe for long text", color = MaterialTheme.colorScheme.primary)
             } else {
                 if (mode == InteractionMode.BILINGUAL && item.dimension != "PRODUCTION") {
                     Text("中文释义", style = MaterialTheme.typography.labelLarge)
@@ -359,7 +364,7 @@ private fun StudyPrompt(item: StudyItem, mode: InteractionMode, revealed: Boolea
                     Text(item.phrase, color = MaterialTheme.colorScheme.primary)
                     if (mode == InteractionMode.FLASHCARD) Text(item.materialExplanation.ifBlank { item.example })
                 }
-                Spacer(Modifier.weight(1f)); Text("Tap card to hide answer", color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(12.dp)); Text("Tap card to hide answer · Swipe for long text", color = MaterialTheme.colorScheme.primary)
             }
         }
     }
@@ -395,13 +400,36 @@ private fun ProviderSettingsScreen(vm: AppViewModel) {
     var baseUrl by remember(vm.providerConfig) { mutableStateOf(vm.providerConfig.baseUrl) }
     var model by remember(vm.providerConfig) { mutableStateOf(vm.providerConfig.model) }
     var key by remember(vm.providerConfig) { mutableStateOf(vm.providerConfig.apiKey) }
+    var confirmRestore by remember { mutableStateOf(false) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let(vm::exportBackup)
+    }
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::restoreBackup)
+    }
     Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Settings", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Text("OpenAI-compatible provider")
         OutlinedTextField(baseUrl, { baseUrl = it }, Modifier.fillMaxWidth(), label = { Text("HTTPS base URL") }, singleLine = true)
         OutlinedTextField(model, { model = it }, Modifier.fillMaxWidth(), label = { Text("Model") }, singleLine = true)
         OutlinedTextField(key, { key = it }, Modifier.fillMaxWidth(), label = { Text("API key") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-        Text("The key is encrypted with Android Keystore and excluded from backups.", style = MaterialTheme.typography.bodySmall)
+        Text("The key is encrypted with Android Keystore on this device. Full exports include it in plain text so another installation can restore it.", style = MaterialTheme.typography.bodySmall)
         Button(onClick = { vm.saveProvider(ProviderConfig(baseUrl, model, key)) }, modifier = Modifier.fillMaxWidth()) { Text("Save provider") }
+        Text("Backup & restore", style = MaterialTheme.typography.titleLarge)
+        Text("A full JSON backup includes vocabulary, learning progress, materials, usage logs, attempts, provider settings, and the API key.")
+        OutlinedButton(
+            onClick = { exportLauncher.launch("vocab-full-backup.json") },
+            enabled = !vm.busy,
+            modifier = Modifier.fillMaxWidth(),
+        ) { Text("Export full backup") }
+        Button(onClick = { confirmRestore = true }, enabled = !vm.busy, modifier = Modifier.fillMaxWidth()) { Text("Restore from backup") }
+        Text("Warning: exported API keys are plain text inside the backup file. Keep it private.", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
     }
+    if (confirmRestore) AlertDialog(
+        onDismissRequest = { confirmRestore = false },
+        title = { Text("Replace all current data?") },
+        text = { Text("A valid backup will replace all vocabulary data, learning history, materials, and provider credentials. The operation is transactional.") },
+        confirmButton = { Button(onClick = { confirmRestore = false; restoreLauncher.launch(arrayOf("application/json", "text/plain")) }) { Text("Choose backup") } },
+        dismissButton = { TextButton(onClick = { confirmRestore = false }) { Text("Cancel") } },
+    )
 }
