@@ -1,7 +1,7 @@
 # Android 0.8 重构交付说明
 
 本轮将 [统一设计](LEARNING_REDESIGN.md) 的核心学习闭环落实到 Android 源码。
-构建、lint、单元与数据库测试仅通过现有 GitHub Actions 工作流执行。当前尚未取得这批改动的 Actions 结果，不能称为已通过构建或已发布。
+构建、lint、单元与数据库测试仅通过现有 GitHub Actions 工作流执行。草稿 PR #1 的首轮 Actions 已通过：`lint`、`testDebugUnitTest` 和 `assembleDebug` 全部成功，用时 3 分 53 秒。APK 已由该工作流生成；尚未进行实体设备体验验证，也未发布版本。
 
 ## 已落入源码
 
@@ -39,4 +39,4 @@
 - 离线教学闭环、独立更新、幂等提交、持久化反馈、提示、无法判分、跳过、报告重放、撤销、旧引擎切换、预算与补充额度。
 - 新旧备份兼容、错误引用拒绝、生产题正面不泄露目标词。
 
-仍需 Actions 给出编译、lint 和测试结果；APK 实机上的软键盘、TalkBack、大字号与恢复体验还需要安装包验证。
+GitHub Actions 已给出成功的编译、lint、测试和 Debug APK 构建结果。APK 实机上的软键盘、TalkBack、大字号与恢复体验还需要安装包验证。
