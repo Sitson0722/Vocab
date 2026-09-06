@@ -253,6 +253,47 @@ class LearningRepositoryTest {
         val wrong = GeneratedMaterial("charge", "an unrelated sense", "SENTENCE", "They charge extra.", "wrong", "general", w.id)
         assertEquals(0, repo.addGeneratedMaterials(listOf(wrong)).first)
     }
+    @Test fun `topic persists through backup and old runtime defaults to general`() = runBlocking {
+        repo.setMaterialTopic("  TBBT  ")
+        val manager = BackupManager(db)
+        val saved = manager.export(ProviderConfig())
+        repo.setMaterialTopic("romance")
+        manager.restore(saved)
+        assertEquals("TBBT", repo.runtime().materialTopic)
+        val old = org.json.JSONObject(RuntimeCodec.encode(repo.runtime())).apply { remove("materialTopic") }
+        assertEquals("", RuntimeCodec.decode(old.toString()).materialTopic)
+    }
+    @Test fun `selected topic is generated despite unused bundled content and preferred in learning`() = runBlocking {
+        repo.setMaterialTopic("romance")
+        val selected = repo.reserveGeneration()
+        assertEquals(5, selected.size)
+        val word = selected.first { it.term == "abandon" }
+        val item = GeneratedMaterial(word.term, word.definition, "SENTENCE",
+            "They decided to abandon the plan and have a romantic dinner instead.", "他们放弃原计划，改为共进浪漫晚餐。", "model-chosen-tag", word.id)
+        assertEquals(1, repo.addGeneratedMaterials(listOf(item), requestedTopic = "romance").first)
+        val material = db.dao().allMaterials().single { it.source == "AI" }
+        assertEquals("romance", material.styleTags)
+        assertEquals("", material.family)
+        assertEquals(material.id, repo.start().session!!.card!!.materialId)
+        repo.setMaterialTopic("TBBT")
+        assertTrue(repo.reserveGeneration().any { it.id == word.id })
+        // A new preference never replaces a question already shown to the learner.
+        assertEquals(material.id, repo.start().session!!.card!!.materialId)
+    }
+    @Test fun `manual topic generation works with automatic generation disabled`() = runBlocking {
+        repo.settings(10, false, 0)
+        repo.setMaterialTopic("TBBT")
+        assertTrue(repo.reserveGeneration().isEmpty())
+        assertEquals(5, repo.reserveGeneration(manual = true).size)
+        assertEquals(0, repo.runtime().day(repo.today()).aiCalls)
+        assertNotNull(repo.start().session!!.card) // Offline fallback remains usable.
+    }
+    @Test fun `undo keeps the newly selected topic`() = runBlocking {
+        val c = install(ExerciseKind.INPUT)
+        repo.submit(c.key, c.answer)
+        repo.setMaterialTopic("romance")
+        assertEquals("romance", repo.undo().materialTopic)
+    }
     @Test fun `invalidating an earlier material preserves and replays later valid attempts`() = runBlocking {
         val first = install(ExerciseKind.INPUT)
         repo.submit(first.key, first.answer)

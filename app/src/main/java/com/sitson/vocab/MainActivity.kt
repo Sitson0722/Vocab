@@ -90,6 +90,7 @@ fun VocabApp(vm: AppViewModel) {
             TextButton(onClick = onTime) { Text("每日目标 ${vm.runtime.dailyMinutes} 分钟") }
         }
         Text("把认识的词，\n变成用得出的词。", style = MaterialTheme.typography.headlineMedium)
+        TextButton(onClick = onTime) { Text("语料主题：${vm.runtime.materialTopic.ifBlank { "通用" }}") }
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
                 Text(if (vm.budgetReached) "今日目标已达成" else "学多少，你决定", style = MaterialTheme.typography.titleLarge)
@@ -276,6 +277,7 @@ fun VocabApp(vm: AppViewModel) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(5, 10, 15).forEach { minutes -> FilterChip(selected = vm.runtime.dailyMinutes == minutes, onClick = { vm.setPreferences(minutes = minutes) }, label = { Text("$minutes 分钟") }, enabled = !vm.working) }
         }
+        TopicSettings(vm)
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("学习记录", style = MaterialTheme.typography.titleLarge)
@@ -286,6 +288,28 @@ fun VocabApp(vm: AppViewModel) {
         }
         TextButton(onClick = { more = !more }) { Text(if (more) "收起更多设置" else "更多设置") }
         if (more) ProviderAndBackupSettings(vm)
+    }
+}
+@Composable private fun TopicSettings(vm: AppViewModel) {
+    var topic by rememberSaveable(vm.runtime.materialTopic) { mutableStateOf(vm.runtime.materialTopic) }
+    val enabled = !vm.working && !vm.generating
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("语料主题", style = MaterialTheme.typography.titleLarge)
+            HintText("让例句围绕你喜欢的话题、影视作品或生活场景展开。")
+            OutlinedTextField(topic, { topic = it.take(120) }, label = { Text("自定义主题") },
+                placeholder = { Text("例如 romance、TBBT、旅行、美食") },
+                modifier = Modifier.fillMaxWidth(), enabled = enabled, maxLines = 3)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("romance", "TBBT").forEach { example ->
+                    SuggestionChip(onClick = { topic = example }, label = { Text(example) }, enabled = enabled)
+                }
+                SuggestionChip(onClick = { topic = "" }, label = { Text("通用") }, enabled = enabled)
+            }
+            Primary(if (vm.generating) "正在生成…" else "保存并生成语料", enabled) { vm.saveTopic(topic, generateNow = true) }
+            TextButton(onClick = { vm.saveTopic(topic) }, enabled = enabled) { Text("仅保存主题") }
+            HintText("TBBT 指《生活大爆炸》。每次生成最多覆盖 5 个义项，需要已配置 AI 服务。主题语料会缓存供离线学习；暂缺时使用已有材料。留空恢复通用主题。")
+        }
     }
 }
 @Composable private fun ProviderAndBackupSettings(vm: AppViewModel) {

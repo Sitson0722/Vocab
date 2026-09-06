@@ -41,6 +41,11 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
         require(minutes in listOf(5, 10, 15) && maxCalls in 0..10)
         runtime().copy(dailyMinutes = minutes, autoAi = autoAi, maxDailyCalls = maxCalls).also { save(it) }
     }
+    suspend fun setMaterialTopic(topic: String): LearningRuntime = db.withTransaction {
+        val normalized = topic.clean()
+        require(normalized.length <= 120) { "主题请控制在 120 字以内。" }
+        runtime().copy(materialTopic = normalized).also { save(it) }
+    }
 
     suspend fun import(words: List<ImportedWord>, style: String = "general"): Pair<Int, Int> = db.withTransaction {
         var added = 0
@@ -135,6 +140,8 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
             val needsDiversity = !GraduationPolicy.verified(MasteryDimension.valueOf(p.dimension), dimEvidence)
             val provenFamilies = dimEvidence.filter { GraduationPolicy.qualifies(it) }.map { it.family }.toSet()
             val pool = materials.filter { it.wordId == word.id }.sortedWith(compareBy<MaterialEntity> {
+                if (it.styleTags.equals(r.materialTopic.ifBlank { "general" }, ignoreCase = true)) 0 else 1
+            }.thenBy {
                 when { !needsDiversity -> 0; it.family.isBlank() -> 2; it.family !in provenFamilies -> 0; else -> 1 }
             }.thenBy { if (p.attempts == 0) usages[it.id].orEmpty().size else 0 }
                 .thenBy { usages[it.id].orEmpty().count { use -> use.dimension == p.dimension } }
@@ -290,7 +297,7 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
         dao.deleteAttempt(requireNotNull(a.attemptKey)); dao.saveProgress(RuntimeCodec.progress(JSONObject(a.priorProgress)))
         // Keep all exposure events: undo cannot make the learner unsee an answer or the next card.
         val card = prior.session?.card
-        val restored = prior.copy(dailyMinutes = r.dailyMinutes, autoAi = r.autoAi, maxDailyCalls = r.maxDailyCalls,
+        val restored = prior.copy(dailyMinutes = r.dailyMinutes, autoAi = r.autoAi, maxDailyCalls = r.maxDailyCalls, materialTopic = r.materialTopic,
             days = r.days.map { d -> d.copy(newSenses = if (d.day == a.day && a.outcome == "TAUGHT") d.newSenses.filterNot { it == a.wordId } else d.newSenses) },
             lastUndoKey = null, session = prior.session?.copy(card = card?.copy(kind = ExerciseKind.SELF, revealed = true, phase = "REVEALED", feedback = "")))
         save(restored); restored
@@ -319,25 +326,27 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
     }
 
     /** Reserves a bounded batch before a network request; failure/restart never refunds the call budget. */
-    suspend fun reserveGeneration(): List<WordSenseEntity> = db.withTransaction {
+    suspend fun reserveGeneration(manual: Boolean = false): List<WordSenseEntity> = db.withTransaction {
         val r = runtime(); val day = r.day(today())
-        if (!r.autoAi || day.aiCalls >= r.maxDailyCalls) return@withTransaction emptyList()
-        val mats = dao.allMaterials().filter { it.quality == "ACTIVE" }
+        if (!manual && (!r.autoAi || day.aiCalls >= r.maxDailyCalls)) return@withTransaction emptyList()
+        val mats = dao.allMaterials().filter { it.quality == "ACTIVE" &&
+            it.type in setOf("SENTENCE", "PHRASE", "COLLOCATION") &&
+            it.styleTags.equals(r.materialTopic.ifBlank { "general" }, ignoreCase = true) }
         val usage = dao.allUsages().map { it.materialId }.toSet()
         val progresses = dao.allProgress().filter { it.dimension in ACTIVE_DIMENSIONS }
-        val eligible = dao.words().filter { w -> progresses.any { it.wordId == w.id && it.dueAt <= now() + 3 * SessionPolicy.DAY } }
+        val eligible = dao.words().filter { w -> manual || progresses.any { it.wordId == w.id && it.dueAt <= now() + 3 * SessionPolicy.DAY } }
             .filter { w -> mats.count { it.wordId == w.id && it.id !in usage } < 2 }.take(5)
-        if (eligible.isNotEmpty()) save(r.withDay(day.copy(aiCalls = day.aiCalls + 1)))
+        if (eligible.isNotEmpty() && !manual) save(r.withDay(day.copy(aiCalls = day.aiCalls + 1)))
         eligible
     }
-    suspend fun addGeneratedMaterials(items: List<GeneratedMaterial>): Pair<Int, Int> = db.withTransaction {
+    suspend fun addGeneratedMaterials(items: List<GeneratedMaterial>, requestedTopic: String? = null): Pair<Int, Int> = db.withTransaction {
         val byId = dao.words().associateBy { it.id }; var accepted = 0
         for (item in items) {
             val word = byId[item.senseId] ?: continue
             if (word.term != item.term || word.definition != item.definition || item.type !in setOf("SENTENCE", "PHRASE", "COLLOCATION")) continue
             if (!CardFactory.termRegex(word.term).containsMatchIn(item.content)) continue
             // AI family/semantic claims are not trusted as verified transfer evidence.
-            if (addMaterial(word.id, item.type, item.content, item.explanation, item.style, "AI")) accepted++
+            if (addMaterial(word.id, item.type, item.content, item.explanation, requestedTopic ?: item.style, "AI")) accepted++
         }
         accepted to (items.size - accepted)
     }

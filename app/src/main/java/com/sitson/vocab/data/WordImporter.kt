@@ -32,6 +32,7 @@ object WordImporter {
         Definition MUST be a concise Simplified Chinese meaning. Phrase must be a natural collocation. Example must disambiguate the meaning.
         Avoid duplicates and inflected duplicates.
         Use a ${style.ifBlank { "general" }} style for the phrase and example.
+        ${MaterialImporter.topicInstruction(style)}
 
         SOURCE:
         $source
