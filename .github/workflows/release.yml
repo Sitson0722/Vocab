@@ -52,8 +52,9 @@ jobs:
           [[ -x "$apksigner" ]] || { echo "apksigner was not found" >&2; exit 1; }
           "$apksigner" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
           mkdir -p release
-          cp app/build/outputs/apk/release/app-release.apk "release/vocab-${GITHUB_REF_NAME}-signed.apk"
-          sha256sum "release/vocab-${GITHUB_REF_NAME}-signed.apk" > "release/vocab-${GITHUB_REF_NAME}-signed.apk.sha256"
+          artifact_ref="${GITHUB_REF_NAME//\//-}"
+          cp app/build/outputs/apk/release/app-release.apk "release/vocab-${artifact_ref}-signed.apk"
+          sha256sum "release/vocab-${artifact_ref}-signed.apk" > "release/vocab-${artifact_ref}-signed.apk.sha256"
 
       - name: Upload signed APK
         uses: actions/upload-artifact@v4

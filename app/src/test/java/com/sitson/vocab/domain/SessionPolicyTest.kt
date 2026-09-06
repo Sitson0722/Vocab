@@ -4,10 +4,9 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SessionPolicyTest {
-    @Test fun `time budget and review backlog constrain new learning`() {
-        assertFalse(SessionPolicy.canIntroduce(600_000, 550_000, 0, 10))
-        assertTrue(SessionPolicy.canIntroduce(600_000, 200_000, 0, 10))
-        assertFalse(SessionPolicy.canIntroduce(600_000, 0, 3, 10))
+    @Test fun `small word pools use a longer real delay without an immediate fallback`() {
+        assertFalse(SessionPolicy.canRepeat(600_000, 1000, 0))
+        assertTrue(SessionPolicy.canRepeat(601_000, 1000, 0))
     }
     @Test fun `same word needs both time and intervening work`() {
         assertFalse(SessionPolicy.canRepeat(121_000, 1000, 2))

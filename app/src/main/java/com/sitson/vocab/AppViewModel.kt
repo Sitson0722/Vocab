@@ -50,7 +50,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(1000)
                 if (ready && foreground && studyOpen && !working) {
-                    runCatching { mutation.withLock { checkpoint() } }.onFailure { message = "学习时间暂未保存，请稍后重试。" }
+                    runCatching { mutation.withLock {
+                        checkpoint()
+                        if (card == null && runtime.session?.finishReason == "WAIT") accept(repository.next())
+                    } }.onFailure { message = "学习时间暂未保存，请稍后重试。" }
                 }
             }
         }
@@ -94,17 +97,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         replenish()
     }
     fun pause() = act { studyOpen = false; refreshData() }
-    fun next() = act { accept(repository.next()); refreshData() }
+    fun next() = act { accept(repository.next()); refreshData(); replenish() }
     fun reveal() { val key = card?.key ?: return; act { accept(repository.reveal(key)) } }
     fun hint() { val key = card?.key ?: return; act { accept(repository.hint(key)) } }
     fun uncertain() { val key = card?.key ?: return; act { accept(repository.uncertain(key)) } }
     fun changeDraft(value: String) { draft = value.take(1000) }
     fun submit(value: String = draft) { val key = card?.key ?: return; act { accept(repository.submit(key, value)); refreshData() } }
-    fun grade(outcome: Outcome) { val key = card?.key ?: return; act { accept(repository.grade(key, outcome)); refreshData() } }
+    fun grade(outcome: Outcome) { val key = card?.key ?: return; act { accept(repository.grade(key, outcome)); refreshData(); replenish() } }
     fun report() { val key = card?.key ?: return; act { accept(repository.report(key)); refreshData() } }
     fun undo() = act { accept(repository.undo()); studyOpen = true; refreshData() }
     fun setPreferences(minutes: Int = runtime.dailyMinutes, automatic: Boolean = runtime.autoAi, calls: Int = runtime.maxDailyCalls) = act {
         accept(repository.settings(minutes, automatic, calls))
+    }
+    fun saveTopic(topic: String, generateNow: Boolean = false) = act {
+        accept(repository.setMaterialTopic(topic))
+        message = if (runtime.materialTopic.isBlank()) "已切换为通用语料。" else "已保存主题：${runtime.materialTopic}。后续练习优先使用该主题语料。"
+        if (generateNow) replenish(manual = true)
     }
     fun clearMessage() { message = null }
     fun abilityLabel(wordId: Long, dimension: MasteryDimension): String {
@@ -137,26 +145,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (generating || text.isBlank()) return
         ProviderConfigValidator.validate(providerConfig)?.let { message = "请先在更多设置中配置 AI 服务。"; return }
         generating = true
+        val topic = runtime.materialTopic
         viewModelScope.launch {
             try {
-                val response = OpenAiCompatibleClient(providerConfig).generate("You are a precise vocabulary lexicographer. Return only the requested JSON.", WordImporter.aiPrompt(text.take(15000)))
+                val response = OpenAiCompatibleClient(providerConfig).generate("You are a precise vocabulary lexicographer. Return only the requested JSON.", WordImporter.aiPrompt(text.take(15000), topic))
                 val items = WordImporter.aiJson(response)
-                mutation.withLock { val (added, _) = repository.import(items); accept(repository.runtime()); refreshData(); message = "已补充 $added 个义项。" }
+                mutation.withLock { val (added, _) = repository.import(items, topic); accept(repository.runtime()); refreshData(); message = "已补充 $added 个义项。" }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { message = "补充未完成，待补充词汇已保留：${e.message}" }
             finally { generating = false }
         }
     }
-    fun replenish() {
-        if (generating || ProviderConfigValidator.validate(providerConfig) != null) return
+    fun replenish(manual: Boolean = false) {
+        if (generating) return
+        if (ProviderConfigValidator.validate(providerConfig) != null) {
+            if (manual) message = "主题已保存。请先在“更多设置”中配置 AI 服务，再生成主题语料。"
+            return
+        }
         generating = true
         viewModelScope.launch {
             try {
-                val selected = mutation.withLock { val batch = repository.reserveGeneration(); accept(repository.runtime()); batch }
-                if (selected.isNotEmpty()) {
-                    val response = OpenAiCompatibleClient(providerConfig).generate("Generate natural, unambiguous materials for the exact provided sense IDs. Return structured JSON only.", MaterialImporter.prompt(selected, "general"))
-                    mutation.withLock { repository.addGeneratedMaterials(MaterialImporter.parse(response)); refreshData() }
+                val (selected, topic) = mutation.withLock {
+                    val batch = repository.reserveGeneration(manual); accept(repository.runtime()); batch to runtime.materialTopic
                 }
+                if (selected.isNotEmpty()) {
+                    val response = OpenAiCompatibleClient(providerConfig).generate("Generate natural, unambiguous materials for the exact provided sense IDs. Return structured JSON only.", MaterialImporter.prompt(selected, topic))
+                    mutation.withLock {
+                        val (added, _) = repository.addGeneratedMaterials(MaterialImporter.parse(response), requestedTopic = topic)
+                        refreshData()
+                        if (manual) message = if (added > 0) "已生成 $added 条${topic.ifBlank { "通用" }}语料，后续练习会优先使用。" else "这批语料重复或不符合要求，未加入题库。可再次尝试。"
+                    }
+                } else if (manual) message = if (words.isEmpty()) "请先添加词汇，再生成语料。" else "当前主题的未学语料已够用，学习后可再补充。"
             } catch (e: CancellationException) { throw e }
             catch (_: Exception) { message = "新语料暂未补充，本地材料仍可继续学习。" }
             finally { generating = false }

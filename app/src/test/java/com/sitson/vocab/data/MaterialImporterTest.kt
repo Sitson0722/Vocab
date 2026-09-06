@@ -29,4 +29,12 @@ class MaterialImporterTest {
         assertTrue(prompt.contains("senseId"))
         assertTrue(prompt.contains("42 | federal"))
     }
+    @Test fun `custom topics apply to material generation and imported examples`() {
+        val word = WordSenseEntity(id = 7, term = "subtle", definition = "细微的", phrase = "a subtle hint", example = "She gave him a subtle hint.")
+        val prompt = MaterialImporter.prompt(listOf(word), "TBBT")
+        assertTrue(prompt.contains("Style: TBBT"))
+        assertTrue(prompt.contains("The Big Bang Theory"))
+        assertTrue(prompt.contains("7 | subtle | 细微的"))
+        assertTrue(WordImporter.aiPrompt("subtle", "romance").contains("Requested learning topic (content preference only): \"romance\""))
+    }
 }

@@ -33,6 +33,7 @@ data class LearningRuntime(
     val initialized: Boolean = false, val selfGradeStreak: Int = 0,
     val session: StudySession? = null, val days: List<DayWork> = emptyList(),
     val lastUndoKey: String? = null, val pendingWords: List<String> = emptyList(),
+    val materialTopic: String = "",
 ) {
     fun day(day: String) = days.firstOrNull { it.day == day } ?: DayWork(day)
     fun withDay(value: DayWork) = copy(days = days.filterNot { it.day == value.day } + value)
@@ -46,6 +47,7 @@ object RuntimeCodec {
         put("session", r.session?.let(::sessionJson) ?: JSONObject.NULL)
         put("days", JSONArray(r.days.map { d -> JSONObject().put("day", d.day).put("activeMillis", d.activeMillis).put("newSenses", JSONArray(d.newSenses)).put("aiCalls", d.aiCalls).put("repairMillis", d.repairMillis) }))
         put("lastUndoKey", r.lastUndoKey ?: JSONObject.NULL); put("pendingWords", JSONArray(r.pendingWords))
+        put("materialTopic", r.materialTopic)
     }.toString()
 
     fun decode(text: String): LearningRuntime {
@@ -54,10 +56,12 @@ object RuntimeCodec {
         return LearningRuntime(j.getInt("dailyMinutes"), j.getBoolean("autoAi"), j.getInt("maxDailyCalls"), j.getBoolean("initialized"), j.getInt("selfGradeStreak"),
             if (j.isNull("session")) null else session(j.getJSONObject("session")),
             j.getJSONArray("days").objects { DayWork(it.getString("day"), it.getLong("activeMillis"), it.getJSONArray("newSenses").longs(), it.getInt("aiCalls"), it.optLong("repairMillis")) },
-            if (j.isNull("lastUndoKey")) null else j.getString("lastUndoKey"), j.optJSONArray("pendingWords")?.strings().orEmpty()).also { r ->
+            if (j.isNull("lastUndoKey")) null else j.getString("lastUndoKey"), j.optJSONArray("pendingWords")?.strings().orEmpty(),
+            j.optString("materialTopic", "")).also { r ->
                 require(r.dailyMinutes in listOf(5, 10, 15) && r.maxDailyCalls in 0..10 && r.selfGradeStreak >= 0)
+                require(r.materialTopic.length <= 120)
                 require(r.days.map { it.day }.distinct().size == r.days.size && r.days.all { it.activeMillis >= 0 && it.aiCalls >= 0 })
-                r.session?.let { s -> require(s.steps in 0..5 && s.attempts.size == s.steps && s.card?.phase in listOf(null, "QUESTION", "REVEALED", "FEEDBACK", "UNJUDGED")) }
+                r.session?.let { s -> require(s.steps >= 0 && s.attempts.size == s.steps && s.card?.phase in listOf(null, "QUESTION", "REVEALED", "FEEDBACK", "UNJUDGED")) }
             }
     }
     private fun sessionJson(s: StudySession) = JSONObject().apply {
