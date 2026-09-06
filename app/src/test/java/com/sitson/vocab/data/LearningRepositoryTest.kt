@@ -192,7 +192,7 @@ class LearningRepositoryTest {
     }
     @Test fun `one word waits across restart and then practices both dimensions`() = runBlocking {
         val w = db.dao().words().first { it.term == "abandon" }
-        db.dao().restoreSnapshot(listOf(w), emptyList(), db.dao().allMaterials().filter { it.wordId == w.id }, emptyList(), emptyList(),
+        db.dao().restoreAll(listOf(w), emptyList(), db.dao().allMaterials().filter { it.wordId == w.id }, emptyList(), emptyList(),
             runtime = RuntimeEntity(json = RuntimeCodec.encode(LearningRuntime(initialized = true))))
         val first = repo.start().session!!.card!!
         val waiting = repo.grade(first.key, Outcome.TAUGHT)
