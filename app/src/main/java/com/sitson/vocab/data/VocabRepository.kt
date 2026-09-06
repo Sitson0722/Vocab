@@ -216,11 +216,14 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
         if (dao.attempt(c.key) != null) return runtime()
         val time = now(); val day = today()
         val previous = dao.progress(c.wordId, c.dimension.name) ?: ProgressEntity(c.wordId, c.dimension.name)
+        val undoable = GradingPolicy.rating(outcome) != null && !c.guided
+        // Only the latest grade is undoable. Don't duplicate an ever-growing daily history in every attempt.
+        dao.clearUndoSnapshots()
         val a = AttemptEntity(wordId = c.wordId, dimension = c.dimension.name, correct = outcome in listOf(Outcome.GOOD, Outcome.HARD), hintsUsed = c.hints,
             responseMillis = c.activeMillis, answer = answer, createdAt = time, attemptKey = c.key, materialId = c.materialId, source = source.name,
             outcome = outcome.name, family = c.family, scope = c.scope.name, kind = c.kind.name, answerExposed = c.revealed, uncertain = c.uncertain,
             guided = c.guided, corePattern = c.corePattern, priorExposureAt = c.priorExposureAt, presentedAt = c.presentedAt, day = day, timeZone = zone().id, sessionId = s.id,
-            priorProgress = RuntimeCodec.progressJson(previous).toString(), priorRuntime = RuntimeCodec.encode(r.copy(lastUndoKey = null)))
+            priorProgress = RuntimeCodec.progressJson(previous).toString(), priorRuntime = if (undoable) RuntimeCodec.encode(r.copy(lastUndoKey = null)) else "")
         if (dao.insertAttempt(a) == -1L) return runtime()
         applyAttempt(previous, a)?.let { dao.saveProgress(it) }
         if (outcome !in listOf(Outcome.SKIP, Outcome.VOID)) dao.insertExposure(ExposureEntity("${c.key}:answer", c.wordId, time, "ANSWER"))
@@ -238,7 +241,7 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
         }
         val work = r.day(day)
         var next = r.withDay(if (outcome == Outcome.TAUGHT) work.copy(newSenses = (work.newSenses + c.wordId).distinct()) else work)
-            .copy(lastUndoKey = if (GradingPolicy.rating(outcome) != null && !c.guided) c.key else null,
+            .copy(lastUndoKey = if (undoable) c.key else null,
                 selfGradeStreak = when { source == EvidenceSource.OBSERVED -> 0; source == EvidenceSource.SELF_REPORTED && !c.guided -> r.selfGradeStreak + 1; else -> r.selfGradeStreak },
                 session = s.copy(steps = s.steps + 1, attempts = s.attempts + c.key,
                     guidedWordId = if (outcome == Outcome.TAUGHT) c.wordId else if (c.guided) null else s.guidedWordId,

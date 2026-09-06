@@ -153,6 +153,7 @@ interface VocabDao {
     @Query("SELECT * FROM AttemptEntity WHERE attemptKey=:key") suspend fun attempt(key: String): AttemptEntity?
     @Query("UPDATE AttemptEntity SET valid=0 WHERE attemptKey=:key") suspend fun invalidateAttempt(key: String)
     @Query("DELETE FROM AttemptEntity WHERE attemptKey=:key") suspend fun deleteAttempt(key: String)
+    @Query("UPDATE AttemptEntity SET priorRuntime='' WHERE priorRuntime != ''") suspend fun clearUndoSnapshots()
     @Query("UPDATE MaterialEntity SET quality='REPORTED' WHERE id=:id") suspend fun reportMaterial(id: Long)
     @Query("SELECT COUNT(*) FROM WordSenseEntity") suspend fun wordCount(): Int
     @Query("DELETE FROM ExposureEntity") suspend fun clearExposures()
