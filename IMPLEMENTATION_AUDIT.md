@@ -1,5 +1,7 @@
 # Implementation audit against the product notes
 
+> 历史计划/审计留档。0.8 重构范围与当前验证状态见 [本轮交付说明](docs/ANDROID_REFACTOR_STATUS.md)。
+
 Reviewed sources: `session.md` (first-principles model and full sense lifecycle),
 `interations.md` (six interaction primitives and evidence collection), and
 `DEVELOPMENT_GUIDE.md` (MVP requirements and acceptance criteria).

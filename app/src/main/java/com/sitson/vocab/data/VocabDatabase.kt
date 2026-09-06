@@ -1,6 +1,7 @@
 package com.sitson.vocab.data
 
 import android.content.Context
+import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
@@ -49,6 +50,7 @@ data class ProgressEntity(
     val attempts: Int = 0,
     val mastery: Double = 0.0,
     val distinctMaterials: Int = 0,
+    @ColumnInfo(defaultValue = "'LEGACY'") val engineVersion: String = "LEGACY",
 )
 
 @Entity(
@@ -65,6 +67,9 @@ data class MaterialEntity(
     val fingerprint: String,
     val source: String,
     val createdAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "''") val family: String = "",
+    @ColumnInfo(defaultValue = "'ACTIVE'") val quality: String = "ACTIVE",
+    @ColumnInfo(defaultValue = "''") val exerciseJson: String = "",
 )
 
 @Entity(
@@ -83,7 +88,7 @@ data class MaterialUsageEntity(
         entity = WordSenseEntity::class,
         parentColumns = ["id"], childColumns = ["wordId"], onDelete = ForeignKey.CASCADE,
     )],
-    indices = [Index("wordId"), Index("createdAt")],
+    indices = [Index("wordId"), Index("createdAt"), Index(value = ["attemptKey"], unique = true)],
 )
 data class AttemptEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -94,116 +99,92 @@ data class AttemptEntity(
     val responseMillis: Long,
     val answer: String,
     val createdAt: Long = System.currentTimeMillis(),
+    val attemptKey: String? = null,
+    val materialId: Long? = null,
+    @ColumnInfo(defaultValue = "'LEGACY_UNKNOWN'") val source: String = "LEGACY_UNKNOWN",
+    @ColumnInfo(defaultValue = "''") val outcome: String = "",
+    @ColumnInfo(defaultValue = "''") val family: String = "",
+    @ColumnInfo(defaultValue = "''") val scope: String = "",
+    @ColumnInfo(defaultValue = "''") val kind: String = "",
+    @ColumnInfo(defaultValue = "0") val answerExposed: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val uncertain: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val guided: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val corePattern: Boolean = false,
+    @ColumnInfo(defaultValue = "1") val valid: Boolean = true,
+    @ColumnInfo(defaultValue = "0") val priorExposureAt: Long = 0,
+    @ColumnInfo(defaultValue = "0") val presentedAt: Long = 0,
+    @ColumnInfo(defaultValue = "''") val day: String = "",
+    @ColumnInfo(defaultValue = "''") val timeZone: String = "",
+    @ColumnInfo(defaultValue = "''") val sessionId: String = "",
+    @ColumnInfo(defaultValue = "''") val priorProgress: String = "",
+    @ColumnInfo(defaultValue = "''") val priorRuntime: String = "",
 )
 
-data class StudyItem(
-    val id: Long,
-    val term: String,
-    val phonetic: String,
-    val definition: String,
-    val phrase: String,
-    val example: String,
-    val dimension: String,
-    val dueAt: Long,
-    val lastReviewedAt: Long,
-    val stabilityDays: Double,
-    val difficulty: Double,
-    val attempts: Int,
-    val materialId: Long,
-    val materialType: String,
-    val materialContent: String,
-    val materialExplanation: String,
-    val styleTags: String,
-    val isNovelMaterial: Boolean,
-)
+@Entity(indices = [Index("wordId"), Index("at")])
+data class ExposureEntity(@PrimaryKey val eventKey: String, val wordId: Long, val at: Long, val kind: String)
 
-data class ReviewCandidate(
-    val id: Long, val term: String, val phonetic: String, val definition: String,
-    val phrase: String, val example: String, val dimension: String, val dueAt: Long,
-    val lastReviewedAt: Long, val stabilityDays: Double, val difficulty: Double, val attempts: Int,
-    val mastery: Double, val distinctMaterials: Int,
-)
+@Entity
+data class RuntimeEntity(@PrimaryKey val id: Int = 1, val json: String)
 
 data class AppStatistics(
-    val words: Int,
-    val mastered: Int,
-    val attempts: Int,
-    val correct: Int,
-    val due: Int,
-    val contextualStrength: Double,
-    val isolatedStrength: Double,
-    val productionStrength: Double,
-    val contextualMastery: Double,
-    val isolatedMastery: Double,
-    val productionMastery: Double,
-    val contextualRetention: Double,
-    val isolatedRetention: Double,
-    val productionRetention: Double,
+    val senses: Int = 0, val steady: Int = 0, val due: Int = 0,
+    val comprehensionVerified: Int = 0, val productionVerified: Int = 0,
+    val activeMinutes: Int = 0, val newToday: Int = 0,
 )
 
 @Dao
 interface VocabDao {
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertWord(word: WordSenseEntity): Long
-
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertProgress(progress: ProgressEntity)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertWord(word: WordSenseEntity): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertProgress(progress: ProgressEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveProgress(progress: ProgressEntity)
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertMaterial(material: MaterialEntity): Long
     @Insert suspend fun insertUsage(usage: MaterialUsageEntity)
-
-    @Insert suspend fun insertAttempt(attempt: AttemptEntity)
-    @Insert suspend fun insertWordsForRestore(words: List<WordSenseEntity>)
-    @Insert suspend fun insertProgressForRestore(progress: List<ProgressEntity>)
-    @Insert suspend fun insertMaterialsForRestore(materials: List<MaterialEntity>)
-    @Insert suspend fun insertUsagesForRestore(usages: List<MaterialUsageEntity>)
-    @Insert suspend fun insertAttemptsForRestore(attempts: List<AttemptEntity>)
-    @Query("UPDATE ProgressEntity SET stabilityDays=:stability, difficulty=:difficulty, consecutiveSuccesses=:successes, lapses=:lapses, dueAt=:dueAt, lastReviewedAt=:reviewedAt, attempts=attempts+1, mastery=:mastery, distinctMaterials=:distinctMaterials WHERE wordId=:wordId AND dimension=:dimension")
-    suspend fun updateProgress(wordId: Long, dimension: String, stability: Double, difficulty: Double, successes: Int, lapses: Int, dueAt: Long, reviewedAt: Long, mastery: Double, distinctMaterials: Int)
-
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertAttempt(attempt: AttemptEntity): Long
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertExposure(exposure: ExposureEntity)
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveRuntime(runtime: RuntimeEntity)
+    @Query("SELECT * FROM RuntimeEntity WHERE id=1") suspend fun runtime(): RuntimeEntity?
     @Query("SELECT * FROM WordSenseEntity ORDER BY term, definition") suspend fun words(): List<WordSenseEntity>
     @Query("SELECT * FROM ProgressEntity") suspend fun allProgress(): List<ProgressEntity>
     @Query("SELECT * FROM MaterialEntity") suspend fun allMaterials(): List<MaterialEntity>
     @Query("SELECT * FROM MaterialUsageEntity") suspend fun allUsages(): List<MaterialUsageEntity>
-    @Query("SELECT * FROM AttemptEntity") suspend fun allAttempts(): List<AttemptEntity>
-    @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId AND dimension=:dimension") suspend fun progress(wordId: Long, dimension: String): ProgressEntity
-    @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId") suspend fun progressForWord(wordId: Long): List<ProgressEntity>
-    @Query("SELECT w.id,w.term,w.phonetic,w.definition,w.phrase,w.example,p.dimension,p.dueAt,p.lastReviewedAt,p.stabilityDays,p.difficulty,p.attempts,p.mastery,p.distinctMaterials FROM WordSenseEntity w JOIN ProgressEntity p ON p.wordId=w.id WHERE p.attempts>0")
-    suspend fun reviewCandidates(): List<ReviewCandidate>
-    @Query("SELECT w.id,w.term,w.phonetic,w.definition,w.phrase,w.example,p.dimension,p.dueAt,p.lastReviewedAt,p.stabilityDays,p.difficulty,p.attempts,p.mastery,p.distinctMaterials FROM WordSenseEntity w JOIN ProgressEntity p ON p.wordId=w.id WHERE p.attempts=0 ORDER BY w.createdAt, CASE p.dimension WHEN 'CONTEXT_COMPREHENSION' THEN 0 WHEN 'ISOLATED_MEANING' THEN 1 ELSE 2 END LIMIT :limit")
-    suspend fun newCandidates(limit: Int): List<ReviewCandidate>
-    @Query("SELECT m.* FROM MaterialEntity m LEFT JOIN MaterialUsageEntity u ON u.materialId=m.id WHERE m.wordId=:wordId AND (:style='' OR m.styleTags LIKE '%' || :style || '%') GROUP BY m.id ORDER BY COUNT(u.id), COALESCE(MAX(u.shownAt),0), m.createdAt DESC")
-    suspend fun materialsFor(wordId: Long, style: String): List<MaterialEntity>
-    @Query("SELECT COUNT(*) FROM MaterialUsageEntity WHERE materialId=:materialId") suspend fun materialUseCount(materialId: Long): Int
-    @Query("SELECT DISTINCT styleTags FROM MaterialEntity WHERE styleTags != '' ORDER BY styleTags") suspend fun styles(): List<String>
-    @Query("SELECT COUNT(*) FROM MaterialEntity") suspend fun materialCount(): Int
-    @Query("SELECT COUNT(*) FROM MaterialUsageEntity") suspend fun materialUsageCount(): Int
+    @Query("SELECT * FROM AttemptEntity ORDER BY createdAt, id") suspend fun allAttempts(): List<AttemptEntity>
+    @Query("SELECT * FROM ExposureEntity ORDER BY at") suspend fun allExposures(): List<ExposureEntity>
+    @Query("SELECT * FROM ProgressEntity WHERE wordId=:wordId AND dimension=:dimension") suspend fun progress(wordId: Long, dimension: String): ProgressEntity?
+    @Query("SELECT * FROM AttemptEntity WHERE attemptKey=:key") suspend fun attempt(key: String): AttemptEntity?
+    @Query("UPDATE AttemptEntity SET valid=0 WHERE attemptKey=:key") suspend fun invalidateAttempt(key: String)
+    @Query("DELETE FROM AttemptEntity WHERE attemptKey=:key") suspend fun deleteAttempt(key: String)
+    @Query("UPDATE AttemptEntity SET priorRuntime='' WHERE priorRuntime != ''") suspend fun clearUndoSnapshots()
+    @Query("UPDATE MaterialEntity SET quality='REPORTED' WHERE id=:id") suspend fun reportMaterial(id: Long)
     @Query("SELECT COUNT(*) FROM WordSenseEntity") suspend fun wordCount(): Int
-    @Query("SELECT COUNT(*) FROM WordSenseEntity WHERE status='MASTERED'") suspend fun masteredCount(): Int
-    @Query("SELECT COUNT(*) FROM AttemptEntity") suspend fun attemptCount(): Int
-    @Query("SELECT COUNT(*) FROM AttemptEntity WHERE correct=1") suspend fun correctCount(): Int
-    @Query("SELECT COUNT(*) FROM ProgressEntity WHERE dueAt<=:now AND attempts>0") suspend fun dueCount(now: Long): Int
-    @Query("SELECT COALESCE(AVG(stabilityDays),0) FROM ProgressEntity WHERE dimension=:dimension") suspend fun averageStrength(dimension: String): Double
-    @Query("SELECT COALESCE(AVG(mastery),0) FROM ProgressEntity WHERE dimension=:dimension") suspend fun averageMastery(dimension: String): Double
-    @Query("SELECT COUNT(DISTINCT m.id) FROM MaterialEntity m JOIN MaterialUsageEntity u ON u.materialId=m.id WHERE m.wordId=:wordId") suspend fun distinctUsedMaterials(wordId: Long): Int
-    @Query("UPDATE WordSenseEntity SET status='MASTERED', masteredAt=:masteredAt WHERE id=:wordId") suspend fun markMastered(wordId: Long, masteredAt: Long)
-
+    @Query("DELETE FROM ExposureEntity") suspend fun clearExposures()
+    @Query("DELETE FROM RuntimeEntity") suspend fun clearRuntime()
     @Query("DELETE FROM MaterialUsageEntity") suspend fun clearUsages()
     @Query("DELETE FROM AttemptEntity") suspend fun clearAttempts()
     @Query("DELETE FROM MaterialEntity") suspend fun clearMaterials()
     @Query("DELETE FROM ProgressEntity") suspend fun clearProgress()
     @Query("DELETE FROM WordSenseEntity") suspend fun clearWords()
+    @Insert suspend fun insertWordsForRestore(words: List<WordSenseEntity>)
+    @Insert suspend fun insertProgressForRestore(progress: List<ProgressEntity>)
+    @Insert suspend fun insertMaterialsForRestore(materials: List<MaterialEntity>)
+    @Insert suspend fun insertUsagesForRestore(usages: List<MaterialUsageEntity>)
+    @Insert suspend fun insertAttemptsForRestore(attempts: List<AttemptEntity>)
+    @Insert suspend fun insertExposuresForRestore(exposures: List<ExposureEntity>)
 
     @Transaction
-    suspend fun restoreAll(
-        words: List<WordSenseEntity>, progress: List<ProgressEntity>, materials: List<MaterialEntity>,
-        usages: List<MaterialUsageEntity>, attempts: List<AttemptEntity>,
-    ) {
-        clearUsages(); clearAttempts(); clearMaterials(); clearProgress(); clearWords()
+    suspend fun restoreAll(words: List<WordSenseEntity>, progress: List<ProgressEntity>, materials: List<MaterialEntity>,
+        usages: List<MaterialUsageEntity>, attempts: List<AttemptEntity>, exposures: List<ExposureEntity> = emptyList(), runtime: RuntimeEntity? = null) {
+        clearRuntime(); clearExposures(); clearUsages(); clearAttempts(); clearMaterials(); clearProgress(); clearWords()
         if (words.isNotEmpty()) insertWordsForRestore(words)
         if (progress.isNotEmpty()) insertProgressForRestore(progress)
         if (materials.isNotEmpty()) insertMaterialsForRestore(materials)
         if (usages.isNotEmpty()) insertUsagesForRestore(usages)
         if (attempts.isNotEmpty()) insertAttemptsForRestore(attempts)
+        if (exposures.isNotEmpty()) insertExposuresForRestore(exposures)
+        runtime?.let { saveRuntime(it) }
+        words.forEach { word ->
+            insertProgress(ProgressEntity(word.id, "CONTEXT_COMPREHENSION"))
+            insertProgress(ProgressEntity(word.id, "PRODUCTION"))
+        }
     }
 
     @Transaction
@@ -211,13 +192,12 @@ interface VocabDao {
         val id = insertWord(word)
         if (id == -1L) return -1
         insertProgress(ProgressEntity(id, "CONTEXT_COMPREHENSION"))
-        insertProgress(ProgressEntity(id, "ISOLATED_MEANING"))
         insertProgress(ProgressEntity(id, "PRODUCTION"))
         return id
     }
 }
 
-@Database(entities = [WordSenseEntity::class, ProgressEntity::class, AttemptEntity::class, MaterialEntity::class, MaterialUsageEntity::class], version = 4, exportSchema = true)
+@Database(entities = [WordSenseEntity::class, ProgressEntity::class, AttemptEntity::class, MaterialEntity::class, MaterialUsageEntity::class, ExposureEntity::class, RuntimeEntity::class], version = 5, exportSchema = true)
 abstract class VocabDatabase : RoomDatabase() {
     abstract fun dao(): VocabDao
 
@@ -225,7 +205,7 @@ abstract class VocabDatabase : RoomDatabase() {
         @Volatile private var instance: VocabDatabase? = null
         fun get(context: Context): VocabDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context, VocabDatabase::class.java, "vocab.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { instance = it }
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build().also { instance = it }
         }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -256,5 +236,30 @@ abstract class VocabDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE WordSenseEntity ADD COLUMN masteredAt INTEGER")
             }
         }
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE ProgressEntity ADD COLUMN engineVersion TEXT NOT NULL DEFAULT 'LEGACY'")
+                db.execSQL("ALTER TABLE MaterialEntity ADD COLUMN family TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE MaterialEntity ADD COLUMN quality TEXT NOT NULL DEFAULT 'ACTIVE'")
+                db.execSQL("ALTER TABLE MaterialEntity ADD COLUMN exerciseJson TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE AttemptEntity ADD COLUMN attemptKey TEXT")
+                db.execSQL("ALTER TABLE AttemptEntity ADD COLUMN materialId INTEGER")
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_AttemptEntity_attemptKey ON AttemptEntity(attemptKey)")
+                listOf("source" to "LEGACY_UNKNOWN", "outcome" to "", "family" to "", "scope" to "", "kind" to "",
+                    "day" to "", "timeZone" to "", "sessionId" to "", "priorProgress" to "", "priorRuntime" to "").forEach { (name, value) ->
+                    db.execSQL("ALTER TABLE AttemptEntity ADD COLUMN $name TEXT NOT NULL DEFAULT '$value'")
+                }
+                listOf("answerExposed", "uncertain", "guided", "corePattern", "priorExposureAt", "presentedAt").forEach { name ->
+                    db.execSQL("ALTER TABLE AttemptEntity ADD COLUMN $name INTEGER NOT NULL DEFAULT 0")
+                }
+                db.execSQL("ALTER TABLE AttemptEntity ADD COLUMN valid INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("CREATE TABLE IF NOT EXISTS ExposureEntity (eventKey TEXT NOT NULL PRIMARY KEY, wordId INTEGER NOT NULL, at INTEGER NOT NULL, kind TEXT NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ExposureEntity_wordId ON ExposureEntity(wordId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_ExposureEntity_at ON ExposureEntity(at)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS RuntimeEntity (id INTEGER NOT NULL PRIMARY KEY, json TEXT NOT NULL)")
+                // Existing third-dimension records and original MASTERED tags are archived, never erased.
+            }
+        }
+
     }
 }

@@ -1,5 +1,23 @@
 # Vocab
 
+## 0.8.0 · 学习闭环重构
+
+今天一键开始，默认每天 10 分钟：先教，再回忆，系统自动混合理解和产出。
+新版本只维护两条活跃能力，采用固定版本 FSRS-6、可追溯作答证据和可恢复的短轮学习。
+旧学习历史及备份兼容保留，初次打开无需配置 AI 即可体验离线示例。
+
+- [本轮实现与验证状态](docs/ANDROID_REFACTOR_STATUS.md)
+- [统一算法与交互设计](docs/LEARNING_REDESIGN.md)
+- [交互原型](docs/prototype/index.html)（设计演示，Android 已单独实现）
+- [FSRS 版本与数值对照](docs/FSRS.md)
+
+**仅使用现有 GitHub Actions 构建和测试，不安装本地 Android 环境。**
+以下为历史版本记录，不作为 0.8.0 的功能或验证声明。
+
+Signed APK 需要仓库 Secrets：`ANDROID_SIGNING_KEY_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、
+`ANDROID_KEY_ALIAS` 和 `ANDROID_KEY_PASSWORD`。手动运行 `Signed Android APK` 可下载签名产物；
+推送 `v*` 标签会同时发布 APK 与 SHA-256 校验文件。
+
 ## 0.7.0
 
 - Long flashcards can be scrolled vertically without leaving the study screen.

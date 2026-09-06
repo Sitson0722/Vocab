@@ -1,0 +1,138 @@
+[
+  {
+    "reset": true,
+    "grade": 3,
+    "gap": 0,
+    "stability": 2.3065,
+    "difficulty": 2.118103970459016,
+    "interval": 2
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 2,
+    "stability": 10.964332335820698,
+    "difficulty": 2.111214235785395,
+    "interval": 11
+  },
+  {
+    "reset": false,
+    "grade": 2,
+    "gap": 7,
+    "stability": 26.09513740710866,
+    "difficulty": 4.748284761594571,
+    "interval": 26
+  },
+  {
+    "reset": false,
+    "grade": 1,
+    "gap": 10,
+    "stability": 2.0146835124027866,
+    "difficulty": 8.259025282096594,
+    "interval": 2
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 0.01,
+    "stability": 2.021515969596155,
+    "difficulty": 8.245994626111335,
+    "interval": 2
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 3,
+    "stability": 5.512373447472242,
+    "difficulty": 8.23297700078206,
+    "interval": 6
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 15,
+    "stability": 17.118861110044552,
+    "difficulty": 8.219972393078116,
+    "interval": 17
+  },
+  {
+    "reset": true,
+    "grade": 1,
+    "gap": 0,
+    "stability": 0.212,
+    "difficulty": 6.4133,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 2,
+    "gap": 0.01,
+    "stability": 0.212,
+    "difficulty": 7.604209769076838,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 1,
+    "stability": 1.4519388312378145,
+    "difficulty": 7.5918339286046,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 1,
+    "gap": 30,
+    "stability": 0.6471467250307092,
+    "difficulty": 9.193680557158455,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 0.1,
+    "stability": 0.6997226464599425,
+    "difficulty": 9.179715245898134,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 2,
+    "gap": 1,
+    "stability": 1.2589999490685801,
+    "difficulty": 9.440685124254477,
+    "interval": 1
+  },
+  {
+    "reset": true,
+    "grade": 2,
+    "gap": 0,
+    "stability": 1.2931,
+    "difficulty": 5.112170705601056,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 0.5,
+    "stability": 1.3358997622047517,
+    "difficulty": 5.102286904192293,
+    "interval": 1
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 60,
+    "stability": 22.035272445639563,
+    "difficulty": 5.0924129865849395,
+    "interval": 22
+  },
+  {
+    "reset": false,
+    "grade": 3,
+    "gap": 90,
+    "stability": 118.75161869705494,
+    "difficulty": 5.082548942895193,
+    "interval": 119
+  }
+]

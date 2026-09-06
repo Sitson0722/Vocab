@@ -1,64 +1,43 @@
 package com.sitson.vocab.domain
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import org.json.JSONArray
+import org.junit.Assert.*
 import org.junit.Test
 
 class ReviewSchedulerTest {
     private val scheduler = ReviewScheduler()
-
-    @Test fun `correct recall lengthens interval without changing dimension`() {
-        val start = ReviewState(MasteryDimension.PRODUCTION, stabilityDays = 2.0)
-        val result = scheduler.review(start, AttemptGrade(correct = true, responseMillis = 4_000, elapsedDays = 2.0))
-        assertEquals(MasteryDimension.PRODUCTION, result.state.dimension)
-        assertTrue(result.nextIntervalDays > 2.0)
-        assertEquals(1, result.state.consecutiveSuccesses)
+    @Test fun `matches pinned official FSRS reference across new short delayed and failed reviews`() {
+        val json = javaClass.getResourceAsStream("/fsrs6-reference.json")!!.bufferedReader().use { it.readText() }
+        val fixtures = JSONArray(json)
+        var state = ReviewState(MasteryDimension.CONTEXT_COMPREHENSION)
+        for (i in 0 until fixtures.length()) {
+            val row = fixtures.getJSONObject(i)
+            if (row.getBoolean("reset")) state = ReviewState(MasteryDimension.CONTEXT_COMPREHENSION)
+            val grade = RecallRating.entries.first { it.value == row.getInt("grade") }
+            val result = scheduler.review(state, grade, row.getDouble("gap"))
+            assertEquals("stability at $i", row.getDouble("stability"), result.state.stabilityDays, 1e-8)
+            assertEquals("difficulty at $i", row.getDouble("difficulty"), result.state.difficulty, 1e-8)
+            assertEquals("interval at $i", row.getInt("interval"), result.nextIntervalDays)
+            state = result.state
+        }
     }
-
-    @Test fun `hinted answer receives less credit than unaided answer`() {
-        val start = ReviewState(MasteryDimension.CONTEXT_COMPREHENSION, stabilityDays = 3.0)
-        val unaided = scheduler.review(start, AttemptGrade(correct = true))
-        val hinted = scheduler.review(start, AttemptGrade(correct = true, hintsUsed = 2))
-        assertTrue(hinted.nextIntervalDays < unaided.nextIntervalDays)
+    @Test fun `same evidence uses same policy in both dimensions without cross updates`() {
+        val c = scheduler.review(ReviewState(MasteryDimension.CONTEXT_COMPREHENSION), RecallRating.GOOD, 0.0)
+        val p = scheduler.review(ReviewState(MasteryDimension.PRODUCTION), RecallRating.GOOD, 0.0)
+        assertEquals(c.nextIntervalDays, p.nextIntervalDays)
+        assertEquals(MasteryDimension.PRODUCTION, p.state.dimension)
     }
-
-    @Test fun `failure reduces stability gradually and schedules a bounded retry`() {
-        val start = ReviewState(MasteryDimension.PRODUCTION, stabilityDays = 20.0, consecutiveSuccesses = 4)
-        val result = scheduler.review(start, AttemptGrade(correct = false, elapsedDays = 20.0))
-        assertTrue(result.state.stabilityDays in 10.0..19.9)
-        assertEquals(0.25, result.nextIntervalDays, 0.001)
-        assertEquals(1, result.state.lapses)
-        assertEquals(0, result.state.consecutiveSuccesses)
-    }
-
-    @Test fun `production is scheduled more conservatively for equal evidence`() {
-        val comprehension = scheduler.review(ReviewState(MasteryDimension.CONTEXT_COMPREHENSION, 5.0), AttemptGrade(true, elapsedDays = 5.0))
-        val production = scheduler.review(ReviewState(MasteryDimension.PRODUCTION, 5.0), AttemptGrade(true, elapsedDays = 5.0))
-        assertTrue(production.nextIntervalDays < comprehension.nextIntervalDays)
-    }
-
-    @Test fun `immediate repetition gives much less stability than delayed retrieval`() {
-        val start = ReviewState(MasteryDimension.CONTEXT_COMPREHENSION, stabilityDays = 4.0)
-        val crammed = scheduler.review(start, AttemptGrade(true, elapsedDays = 0.01))
-        val delayed = scheduler.review(start, AttemptGrade(true, elapsedDays = 8.0))
-        assertTrue(delayed.state.stabilityDays > crammed.state.stabilityDays * 1.5)
-    }
-
-    @Test fun `retention is ninety percent at one stability interval`() {
-        assertEquals(0.9, MemoryModel.retention(elapsedDays = 12.0, stabilityDays = 12.0), 0.0001)
+    @Test fun `retention falls with time and is ninety percent at stability`() {
+        assertEquals(0.9, MemoryModel.retention(12.0, 12.0), 1e-10)
         assertTrue(MemoryModel.retention(24.0, 12.0) < MemoryModel.retention(6.0, 12.0))
     }
-
-    @Test fun `reusing one material cannot create high mastery`() {
-        var state = ReviewState(MasteryDimension.CONTEXT_COMPREHENSION, stabilityDays = 2.0)
-        repeat(12) { state = scheduler.review(state, AttemptGrade(true, elapsedDays = 2.0, novelMaterial = it == 0)).state }
-        assertTrue(state.mastery <= 0.55)
+    @Test fun `hinted successes are Again and skips never produce a scheduler rating`() {
+        assertEquals(Outcome.ASSISTED, GradingPolicy.outcome(true, true, false))
+        assertEquals(RecallRating.AGAIN, GradingPolicy.rating(Outcome.ASSISTED))
+        assertEquals(RecallRating.HARD, GradingPolicy.rating(GradingPolicy.outcome(true, false, true)))
+        listOf(Outcome.SKIP, Outcome.TAUGHT, Outcome.VOID, Outcome.ALTERNATIVE).forEach { assertNull(GradingPolicy.rating(it)) }
     }
-
-    @Test fun `diverse delayed evidence raises mastery more than repeated material`() {
-        val start = ReviewState(MasteryDimension.CONTEXT_COMPREHENSION, stabilityDays = 3.0)
-        val novel = scheduler.review(start, AttemptGrade(true, elapsedDays = 4.0, novelMaterial = true))
-        val repeated = scheduler.review(start, AttemptGrade(true, elapsedDays = 4.0, novelMaterial = false))
-        assertTrue(novel.state.mastery > repeated.state.mastery * 4)
+    @Test fun `invalid elapsed duration is rejected`() {
+        assertThrows(IllegalArgumentException::class.java) { scheduler.review(ReviewState(MasteryDimension.PRODUCTION), RecallRating.GOOD, Double.NaN) }
     }
 }

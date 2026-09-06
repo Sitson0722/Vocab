@@ -17,6 +17,7 @@ class OpenAiCompatibleClient(private val config: ProviderConfig) : MaterialGener
         val body = JSONObject()
             .put("model", config.model)
             .put("temperature", 0.7)
+            .put("max_tokens", 2500)
             .put(
                 "messages",
                 org.json.JSONArray()
@@ -30,12 +31,18 @@ class OpenAiCompatibleClient(private val config: ProviderConfig) : MaterialGener
             connection.connectTimeout = 15_000
             connection.readTimeout = 45_000
             connection.doOutput = true
+            connection.instanceFollowRedirects = false
             connection.setRequestProperty("Authorization", "Bearer ${config.apiKey}")
             connection.setRequestProperty("Content-Type", "application/json")
             connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val response = stream.bufferedReader().use { it.readText() }
+            val response = stream?.bufferedReader()?.use { reader ->
+                val chars = CharArray(1_000_001)
+                var size = 0
+                while (size < chars.size) { val count = reader.read(chars, size, chars.size - size); if (count < 0) break; size += count }
+                require(size <= 1_000_000) { "服务返回的内容过大。" }; String(chars, 0, size)
+            }.orEmpty()
             if (status !in 200..299) error("Provider request failed (HTTP $status).")
             JSONObject(response).getJSONArray("choices").getJSONObject(0)
                 .getJSONObject("message").getString("content")

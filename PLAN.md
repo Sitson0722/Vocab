@@ -1,5 +1,7 @@
 # Vocab v1 implementation plan
 
+> 历史计划/审计留档。0.8 重构范围与当前验证状态见 [本轮交付说明](docs/ANDROID_REFACTOR_STATUS.md)。
+
 ## Product slice
 
 V1 is an offline-first Android application that proves the complete learning loop: browse seeded

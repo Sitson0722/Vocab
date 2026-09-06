@@ -1,35 +1,34 @@
 package com.sitson.vocab.domain
 
-enum class MasteryDimension { CONTEXT_COMPREHENSION, ISOLATED_MEANING, PRODUCTION }
+/** ISOLATED_MEANING survives only as archived database history, never an active dimension. */
+enum class MasteryDimension(val label: String) {
+    CONTEXT_COMPREHENSION("看得懂"), PRODUCTION("用得出"),
+}
+enum class RecallRating(val value: Int) { AGAIN(1), HARD(2), GOOD(3) }
+enum class Outcome { GOOD, HARD, AGAIN, ASSISTED, ALTERNATIVE, TAUGHT, SKIP, VOID }
+enum class EvidenceSource { OBSERVED, SELF_REPORTED, NONE, LEGACY_UNKNOWN }
+enum class ExerciseKind { TEACH, SELF, INPUT, CHOICE }
+enum class EvidenceScope { CONTEXT_MEANING, FORM_RECALL, PATTERN_COMPLETION, ENCOUNTER }
 
 data class ReviewState(
     val dimension: MasteryDimension,
-    val stabilityDays: Double = 0.5,
-    val difficulty: Double = 0.5,
-    val consecutiveSuccesses: Int = 0,
-    val lapses: Int = 0,
-    val mastery: Double = 0.0,
-    val distinctMaterials: Int = 0,
+    val stabilityDays: Double = 0.0,
+    val difficulty: Double = 0.0,
+    val initialized: Boolean = false,
 )
+data class ReviewDecision(val state: ReviewState, val nextIntervalDays: Int)
 
-data class AttemptGrade(
-    val correct: Boolean,
-    val hintsUsed: Int = 0,
-    val responseMillis: Long = 0,
-    val elapsedDays: Double = 0.0,
-    val novelMaterial: Boolean = false,
-)
-
-data class ReviewDecision(
-    val state: ReviewState,
-    val nextIntervalDays: Double,
-)
-
-object MemoryModel {
-    /** Stability is the number of days at which predicted retention reaches 90%. */
-    fun retention(elapsedDays: Double, stabilityDays: Double): Double {
-        if (elapsedDays <= 0.0) return 1.0
-        return kotlin.math.exp(kotlin.math.ln(0.9) * elapsedDays / stabilityDays.coerceAtLeast(0.2))
-            .coerceIn(0.0, 1.0)
+object GradingPolicy {
+    fun outcome(correct: Boolean, hinted: Boolean, uncertain: Boolean): Outcome = when {
+        !correct -> Outcome.AGAIN
+        hinted -> Outcome.ASSISTED
+        uncertain -> Outcome.HARD
+        else -> Outcome.GOOD
+    }
+    fun rating(outcome: Outcome): RecallRating? = when (outcome) {
+        Outcome.GOOD -> RecallRating.GOOD
+        Outcome.HARD -> RecallRating.HARD
+        Outcome.AGAIN, Outcome.ASSISTED -> RecallRating.AGAIN
+        else -> null
     }
 }
