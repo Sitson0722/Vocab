@@ -2,235 +2,189 @@ package com.sitson.vocab
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.sitson.vocab.data.AppStatistics
-import com.sitson.vocab.data.BackupManager
-import com.sitson.vocab.data.ImportedWord
-import com.sitson.vocab.data.StudyItem
-import com.sitson.vocab.data.VocabDatabase
-import com.sitson.vocab.data.VocabRepository
-import com.sitson.vocab.data.WordImporter
-import com.sitson.vocab.data.WordSenseEntity
-import com.sitson.vocab.provider.OpenAiCompatibleClient
-import com.sitson.vocab.provider.ProviderConfig
-import com.sitson.vocab.provider.ProviderConfigValidator
-import com.sitson.vocab.provider.SecureProviderStore
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-
-enum class InteractionMode { FLASHCARD, BILINGUAL }
+import com.sitson.vocab.data.*
+import com.sitson.vocab.domain.*
+import com.sitson.vocab.provider.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = VocabRepository(VocabDatabase.get(application).dao())
-    private val backupManager = BackupManager(VocabDatabase.get(application).dao())
+    private val database = VocabDatabase.get(application)
+    private val repository = VocabRepository(database)
+    private val backupManager = BackupManager(database)
     private val providerStore = SecureProviderStore(application)
-
+    private val mutation = Mutex()
+    var runtime by mutableStateOf(LearningRuntime()); private set
     var words by mutableStateOf<List<WordSenseEntity>>(emptyList()); private set
-    var statistics by mutableStateOf(
-        AppStatistics(
-            words = 0, mastered = 0, attempts = 0, correct = 0, due = 0,
-            contextualStrength = 0.0, isolatedStrength = 0.0, productionStrength = 0.0,
-            contextualMastery = 0.0, isolatedMastery = 0.0, productionMastery = 0.0,
-            contextualRetention = 0.0, isolatedRetention = 0.0, productionRetention = 0.0,
-        ),
-    ); private set
-    var materialStyles by mutableStateOf<List<String>>(emptyList()); private set
+    var schedules by mutableStateOf<List<ProgressEntity>>(emptyList()); private set
+    var statuses by mutableStateOf<Map<Long, LearningStatus>>(emptyMap()); private set
+    var attempts by mutableStateOf<List<AttemptEntity>>(emptyList()); private set
+    var statistics by mutableStateOf(AppStatistics()); private set
     var providerConfig by mutableStateOf(providerStore.load()); private set
     var message by mutableStateOf<String?>(null); private set
-    var busy by mutableStateOf(false); private set
-    var session by mutableStateOf<List<StudyItem>>(emptyList()); private set
-    var sessionIndex by mutableStateOf(0); private set
-    var feedback by mutableStateOf<String?>(null); private set
-    var hints by mutableStateOf(0); private set
-    var interactionMode by mutableStateOf(InteractionMode.FLASHCARD); private set
-    var grading by mutableStateOf(false); private set
-    private var questionStarted = 0L
-    private var knownCount = 0
-    private var hardCount = 0
-    private var againCount = 0
-    private var skippedCount = 0
+    var working by mutableStateOf(false); private set
+    var generating by mutableStateOf(false); private set
+    var ready by mutableStateOf(false); private set
+    var studyOpen by mutableStateOf(false); private set
+    var draft by mutableStateOf(""); private set
+    private var foreground = false
+    private var lastTick = SystemClock.elapsedRealtime()
+    val card get() = runtime.session?.card
+    val budgetReached get() = runtime.day(repository.today()).activeMillis >= runtime.dailyMinutes * 60_000L
+    val todayWork get() = runtime.day(repository.today())
 
-    val currentItem get() = session.getOrNull(sessionIndex)
-
-    init { refresh() }
-
-    fun refresh() = viewModelScope.launch {
-        words = repository.words()
-        statistics = repository.statistics()
-        materialStyles = repository.styles()
+    init {
+        viewModelScope.launch {
+            runCatching { mutation.withLock { accept(repository.initialize()); refreshData() } }
+                .onSuccess { ready = true }
+                .onFailure { message = "读取学习数据失败：${it.message}。请重新打开应用。" }
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000)
+                if (ready && foreground && studyOpen && !working) {
+                    runCatching { mutation.withLock { checkpoint() } }.onFailure { message = "学习时间暂未保存，请稍后重试。" }
+                }
+            }
+        }
     }
-
+    private fun accept(r: LearningRuntime) {
+        if (r.session?.card?.key != card?.key || r.session?.card?.phase != card?.phase) draft = r.session?.card?.draft.orEmpty()
+        runtime = r
+    }
+    private suspend fun refreshData() {
+        words = repository.words(); schedules = repository.schedules(); statuses = repository.statuses(); attempts = repository.attempts(); statistics = repository.statistics()
+    }
+    private suspend fun checkpoint() {
+        val tick = SystemClock.elapsedRealtime()
+        val delta = if (foreground && studyOpen) (tick - lastTick).coerceIn(0, 5000) else 0L
+        lastTick = tick
+        val c = card ?: return
+        accept(repository.checkpoint(c.key, delta, draft))
+    }
+    fun setForeground(active: Boolean) {
+        if (!active) {
+            val elapsed = if (foreground && studyOpen) (SystemClock.elapsedRealtime() - lastTick).coerceIn(0, 5000) else 0
+            val key = card?.key; val text = draft
+            foreground = false
+            viewModelScope.launch { mutation.withLock { if (key != null) runCatching { accept(repository.checkpoint(key, elapsed, text)) } } }
+        } else foreground = true
+        lastTick = SystemClock.elapsedRealtime()
+    }
+    private fun act(block: suspend () -> Unit) {
+        if (working || !ready) return
+        working = true
+        viewModelScope.launch {
+            try { mutation.withLock { checkpoint(); block() } }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { message = "操作未完成，已保存的数据会保留，可以重试：${e.message}" }
+            finally { lastTick = SystemClock.elapsedRealtime(); working = false }
+        }
+    }
+    fun start(extra: Boolean = false) = act {
+        accept(repository.start(extra)); studyOpen = true
+        // The local session is available immediately. At most one reserved batch per start, no retry loop.
+        replenish()
+    }
+    fun pause() = act { studyOpen = false; refreshData() }
+    fun next() = act { accept(repository.next()); refreshData() }
+    fun reveal() { val key = card?.key ?: return; act { accept(repository.reveal(key)) } }
+    fun hint() { val key = card?.key ?: return; act { accept(repository.hint(key)) } }
+    fun uncertain() { val key = card?.key ?: return; act { accept(repository.uncertain(key)) } }
+    fun changeDraft(value: String) { draft = value.take(1000) }
+    fun submit(value: String = draft) { val key = card?.key ?: return; act { accept(repository.submit(key, value)); refreshData() } }
+    fun grade(outcome: Outcome) { val key = card?.key ?: return; act { accept(repository.grade(key, outcome)); refreshData() } }
+    fun report() { val key = card?.key ?: return; act { accept(repository.report(key)); refreshData() } }
+    fun undo() = act { accept(repository.undo()); studyOpen = true; refreshData() }
+    fun setPreferences(minutes: Int = runtime.dailyMinutes, automatic: Boolean = runtime.autoAi, calls: Int = runtime.maxDailyCalls) = act {
+        accept(repository.settings(minutes, automatic, calls))
+    }
     fun clearMessage() { message = null }
-
-    fun importFixed(text: String, style: String) = viewModelScope.launch {
-        runCatching { WordImporter.fixedFormat(text) }
-            .onSuccess { importWords(it, style) }
-            .onFailure { message = it.message ?: "The import could not be parsed." }
+    fun abilityLabel(wordId: Long, dimension: MasteryDimension): String {
+        val p = schedules.firstOrNull { it.wordId == wordId && it.dimension == dimension.name }
+        if (p != null && p.attempts > 0 && p.dueAt <= System.currentTimeMillis()) return "待巩固"
+        val records = attempts.filter { it.wordId == wordId }.mapNotNull(repository::evidence)
+        if (GraduationPolicy.verified(dimension, records)) return "已有跨日、跨语境验证"
+        return if (records.any { it.dimension == dimension && it.source == EvidenceSource.OBSERVED }) "练习中，继续验证" else "待验证"
     }
+    fun nextReviewLabel(wordId: Long, dimension: MasteryDimension): String? = schedules
+        .firstOrNull { it.wordId == wordId && it.dimension == dimension.name && it.attempts > 0 }?.let {
+            java.time.Instant.ofEpochMilli(it.dueAt).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+        }
 
-    fun importWithAi(text: String, style: String) = viewModelScope.launch {
-        val validation = ProviderConfigValidator.validate(providerConfig)
-        if (validation != null) { message = "Configure AI first: $validation"; return@launch }
-        if (text.isBlank()) { message = "Paste some text to extract vocabulary from."; return@launch }
-        busy = true
-        runCatching {
-            val response = OpenAiCompatibleClient(providerConfig).generate(
-                "You are a precise vocabulary lexicographer. Follow the requested JSON schema.",
-                WordImporter.aiPrompt(text, style),
-            )
-            WordImporter.aiJson(response)
-        }.onSuccess { importWords(it, style) }
-            .onFailure { message = "AI import failed: ${it.message}" }
-        busy = false
+
+    fun addWords(text: String) = act {
+        val content = text.trim()
+        require(content.isNotBlank()) { "请先粘贴词汇。" }
+        if ('|' in content || content.startsWith("[")) {
+            val parsed = if (content.startsWith("[")) WordImporter.aiJson(content) else WordImporter.fixedFormat(content)
+            val (added, skipped) = repository.import(parsed)
+            message = "已导入 $added 个义项，跳过 $skipped 个重复项。"
+        } else {
+            val added = repository.addPending(content)
+            message = "已加入 $added 条待补充词汇。可导入离线词包，或在配置服务后补充释义。"
+        }
+        accept(repository.runtime()); refreshData()
     }
-
-    private suspend fun importWords(items: List<ImportedWord>, style: String) {
-        val (added, duplicates) = repository.import(items, style)
-        message = "Added $added sense${if (added == 1) "" else "s"}. Skipped $duplicates duplicate${if (duplicates == 1) "" else "s"}."
-        words = repository.words()
-        statistics = repository.statistics()
-        materialStyles = repository.styles()
-    }
-
-    fun refreshMaterials(style: String) = viewModelScope.launch { refreshMaterialsInternal(style, announce = true) }
-
-    private suspend fun refreshMaterialsInternal(style: String, announce: Boolean) {
-        ProviderConfigValidator.validate(providerConfig)?.let { if (announce) message = "Configure AI first: $it"; return }
-        if (words.isEmpty()) { if (announce) message = "Add words before generating materials."; return }
-        busy = true
-        runCatching {
-            val response = OpenAiCompatibleClient(providerConfig).generate(
-                "You create varied, unambiguous vocabulary-learning material as strict JSON.",
-                com.sitson.vocab.data.MaterialImporter.prompt(words.take(30), style),
-            )
-            repository.addGeneratedMaterials(com.sitson.vocab.data.MaterialImporter.parse(response))
-        }.onSuccess { (accepted, rejected) ->
-            if (announce) message = "Added $accepted fresh materials; rejected $rejected invalid or duplicate items."
-            materialStyles = repository.styles()
-        }.onFailure { if (announce) message = "Material refresh failed: ${it.message}" }
-        busy = false
-    }
-
-    fun saveProvider(config: ProviderConfig): Boolean {
-        ProviderConfigValidator.validate(config)?.let { message = it; return false }
-        providerStore.save(config); providerConfig = config; message = "Provider saved securely."; return true
-    }
-
-    fun exportBackup(uri: Uri) = viewModelScope.launch {
-        busy = true
-        runCatching {
-            val json = backupManager.export(providerConfig)
-            withContext(Dispatchers.IO) {
-                getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(json) }
-                    ?: error("The selected file could not be opened.")
-            }
-        }.onSuccess { message = "Full backup saved. It contains your API key—store it securely." }
-            .onFailure { message = "Backup failed: ${it.message}" }
-        busy = false
-    }
-
-    fun restoreBackup(uri: Uri) = viewModelScope.launch {
-        busy = true
-        runCatching {
-            val json = withContext(Dispatchers.IO) {
-                getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-                    ?: error("The selected file could not be opened.")
-            }
-            require(json.length <= 25_000_000) { "Backup is larger than the supported 25 MB limit." }
-            val backup = backupManager.restore(json)
-            providerStore.save(backup.provider)
-            providerConfig = backup.provider
-            session = emptyList()
-            refresh()
-            backup.words.size
-        }.onSuccess { message = "Restore complete: $it vocabulary senses and all learning history restored." }
-            .onFailure { message = "Restore failed; existing data was kept: ${it.message}" }
-        busy = false
-    }
-
-    fun startSession(
-        review: Boolean,
-        quantity: Int = 20,
-        style: String = "",
-        dimension: String = "",
-        mode: InteractionMode = InteractionMode.FLASHCARD,
-    ) = viewModelScope.launch {
-        interactionMode = mode
-        initializeSession(repository.queue(review, quantity.coerceIn(1, 500), style, dimension))
-        if (session.isEmpty()) message = if (review) "No studied items match this material style yet." else "Add words before starting a learning session."
-        if (review && repository.shouldRefreshMaterials() && ProviderConfigValidator.validate(providerConfig) == null) {
-            // Never delay the local session for network generation.
-            viewModelScope.launch { refreshMaterialsInternal(style, announce = false) }
+    fun importWithAi(text: String) {
+        if (generating || text.isBlank()) return
+        ProviderConfigValidator.validate(providerConfig)?.let { message = "请先在更多设置中配置 AI 服务。"; return }
+        generating = true
+        viewModelScope.launch {
+            try {
+                val response = OpenAiCompatibleClient(providerConfig).generate("You are a precise vocabulary lexicographer. Return only the requested JSON.", WordImporter.aiPrompt(text.take(15000)))
+                val items = WordImporter.aiJson(response)
+                mutation.withLock { val (added, _) = repository.import(items); accept(repository.runtime()); refreshData(); message = "已补充 $added 个义项。" }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { message = "补充未完成，待补充词汇已保留：${e.message}" }
+            finally { generating = false }
         }
     }
-
-    fun startDailyPlan(quantity: Int, style: String, dimension: String, mode: InteractionMode) = viewModelScope.launch {
-        interactionMode = mode
-        initializeSession(repository.dailyQueue(quantity.coerceIn(1, 500), style, dimension))
-        if (session.isEmpty()) message = "No learning or review items match these settings."
-    }
-
-    private suspend fun initializeSession(items: List<StudyItem>) {
-        session = items; sessionIndex = 0; feedback = null; hints = 0
-        knownCount = 0; hardCount = 0; againCount = 0; skippedCount = 0
-        questionStarted = System.currentTimeMillis()
-        session.firstOrNull()?.let { repository.recordMaterialShown(it) }
-    }
-
-    fun showHint() { if (feedback == null) hints++ }
-
-    fun submit(answer: String) = viewModelScope.launch {
-        val item = currentItem ?: return@launch
-        if (feedback != null) return@launch
-        val normalized = answer.trim().lowercase().replace(Regex("[^a-z0-9' -]"), "")
-        val target = if (item.dimension != "PRODUCTION") item.definition else item.term
-        val correct = if (item.dimension != "PRODUCTION") answer == item.definition
-            else normalized == item.term.lowercase() || normalized == item.phrase.lowercase()
-        repository.grade(item, correct, hints, System.currentTimeMillis() - questionStarted, answer)
-        feedback = if (correct) "Correct — ${item.term}: ${item.definition}" else "Answer: $target\n${item.phrase}\n${item.example}"
-        statistics = repository.statistics()
-    }
-
-    fun selfGrade(rating: String) = viewModelScope.launch {
-        val item = currentItem ?: return@launch
-        if (feedback != null || grading) return@launch
-        grading = true
-        val correct = rating != "AGAIN"
-        val effortPenalty = if (rating == "HARD") 1 else 0
-        try {
-            repository.grade(item, correct, effortPenalty, System.currentTimeMillis() - questionStarted, "SELF_$rating")
-            when (rating) { "AGAIN" -> againCount++; "HARD" -> hardCount++; else -> knownCount++ }
-            statistics = repository.statistics()
-            advanceAfterGrade()
-        } finally {
-            grading = false
+    fun replenish() {
+        if (generating || ProviderConfigValidator.validate(providerConfig) != null) return
+        generating = true
+        viewModelScope.launch {
+            try {
+                val selected = mutation.withLock { val batch = repository.reserveGeneration(); accept(repository.runtime()); batch }
+                if (selected.isNotEmpty()) {
+                    val response = OpenAiCompatibleClient(providerConfig).generate("Generate natural, unambiguous materials for the exact provided sense IDs. Return structured JSON only.", MaterialImporter.prompt(selected, "general"))
+                    mutation.withLock { repository.addGeneratedMaterials(MaterialImporter.parse(response)); refreshData() }
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { message = "新语料暂未补充，本地材料仍可继续学习。" }
+            finally { generating = false }
         }
     }
-
-    fun skipCard() {
-        if (grading) return
-        skippedCount++
-        advanceAfterGrade()
+    fun saveProvider(config: ProviderConfig) {
+        ProviderConfigValidator.validate(config)?.let { message = "服务设置未保存：$it"; return }
+        providerStore.save(config); providerConfig = config; message = "服务设置已保存。"
     }
-
-    fun nextQuestion() {
-        advanceAfterGrade()
-    }
-
-    private fun advanceAfterGrade() {
-        if (sessionIndex + 1 >= session.size) {
-            session = emptyList(); sessionIndex = 0
-            message = "Session complete — 会 $knownCount · 困难 $hardCount · 不会 $againCount · 跳过 $skippedCount"
-            refresh(); return
+    fun exportBackup(uri: Uri) = act {
+        val json = backupManager.export(providerConfig)
+        withContext(Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.bufferedWriter()?.use { it.write(json) } ?: error("无法写入所选文件。")
         }
-        sessionIndex++; feedback = null; hints = 0; questionStarted = System.currentTimeMillis()
-        viewModelScope.launch { currentItem?.let { repository.recordMaterialShown(it) } }
+        message = "备份已导出，包含服务密钥，请妥善保存。"
     }
-
-    fun leaveSession() { session = emptyList(); sessionIndex = 0; feedback = null }
+    fun restoreBackup(uri: Uri) = act {
+        require(!generating) { "请等当前内容补充完成后再恢复备份。" }
+        val json = withContext(Dispatchers.IO) {
+            getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+                val chars = CharArray(25_000_001); var size = 0
+                while (size < chars.size) { val n = reader.read(chars, size, chars.size - size); if (n < 0) break; size += n }
+                require(size <= 25_000_000) { "备份超过 25 MB。" }; String(chars, 0, size)
+            } ?: error("无法读取所选文件。")
+        }
+        val backup = backupManager.restore(json)
+        providerStore.save(backup.provider); providerConfig = backup.provider
+        accept(repository.initialize()); draft = card?.draft.orEmpty(); studyOpen = false; refreshData()
+        message = "已恢复 ${backup.words.size} 个义项及学习记录。"
+    }
 }

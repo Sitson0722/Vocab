@@ -23,9 +23,10 @@ class MaterialImporterTest {
         }
     }
 
-    @Test fun `prompt carries user style and proper noun rule`() {
-        val prompt = MaterialImporter.prompt(listOf(WordSenseEntity(term = "federal", definition = "联邦的", phrase = "federal law", example = "Federal law applies.")), "science")
+    @Test fun `prompt carries user style and stable sense identity`() {
+        val prompt = MaterialImporter.prompt(listOf(WordSenseEntity(id = 42, term = "federal", definition = "联邦的", phrase = "federal law", example = "Federal law applies.")), "science")
         assertTrue(prompt.contains("Style: science"))
-        assertTrue(prompt.contains("PROPER_NOUN"))
+        assertTrue(prompt.contains("senseId"))
+        assertTrue(prompt.contains("42 | federal"))
     }
 }
