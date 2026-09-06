@@ -30,7 +30,7 @@ class MaterialImporterTest {
         assertTrue(prompt.contains("42 | federal"))
     }
     @Test fun `custom topics apply to material generation and imported examples`() {
-        val word = WordSenseEntity(id = 7, term = "subtle", definition = "细微的")
+        val word = WordSenseEntity(id = 7, term = "subtle", definition = "细微的", phrase = "a subtle hint", example = "She gave him a subtle hint.")
         val prompt = MaterialImporter.prompt(listOf(word), "TBBT")
         assertTrue(prompt.contains("Style: TBBT"))
         assertTrue(prompt.contains("The Big Bang Theory"))
