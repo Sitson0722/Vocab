@@ -40,3 +40,5 @@
 - 新旧备份兼容、错误引用拒绝、生产题正面不泄露目标词。
 
 GitHub Actions 已给出成功的编译、lint、测试和 Debug APK 构建结果。APK 实机上的软键盘、TalkBack、大字号与恢复体验还需要安装包验证。
+
+签名发布工作流位于 `.github/workflows/release.yml`。它只从 GitHub Secrets 还原长期签名密钥，执行检查、测试与 Release APK 构建，使用 `apksigner` 验证签名，输出 SHA-256，并在 `v*` 标签下发布 Release。缺少任何签名 Secret 时会明确失败，不生成一次性密钥或伪装成正式包。

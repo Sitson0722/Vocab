@@ -14,6 +14,10 @@
 **仅使用现有 GitHub Actions 构建和测试，不安装本地 Android 环境。**
 以下为历史版本记录，不作为 0.8.0 的功能或验证声明。
 
+Signed APK 需要仓库 Secrets：`ANDROID_SIGNING_KEY_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、
+`ANDROID_KEY_ALIAS` 和 `ANDROID_KEY_PASSWORD`。手动运行 `Signed Android APK` 可下载签名产物；
+推送 `v*` 标签会同时发布 APK 与 SHA-256 校验文件。
+
 ## 0.7.0
 
 - Long flashcards can be scrolled vertically without leaving the study screen.
