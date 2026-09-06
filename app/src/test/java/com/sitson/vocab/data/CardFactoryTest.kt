@@ -15,11 +15,13 @@ class CardFactoryTest {
     @Test fun `substring matches do not create unsolvable inflection blanks`() {
         assertNull(CardFactory.create(word, material("They charged extra."), MasteryDimension.PRODUCTION, false, true, false, 100, 0, "test"))
     }
-    @Test fun `pattern completion has a different evidence scope from form recall`() {
+    @Test fun `production retrieves the complete collocation instead of revealing the word`() {
         val seed = SeedContent.senses.first { it.word.term == "depend" }; val context = seed.contexts.first()
         val w = WordSenseEntity(1, "depend", definition = seed.word.definition, phrase = seed.word.phrase, example = seed.word.example)
         val card = CardFactory.create(w, material(context.sentence).copy(exerciseJson = SeedContent.exercise(context)), MasteryDimension.PRODUCTION, false, true, false, 100, 0, "test")!!
-        assertEquals(EvidenceScope.PATTERN_COMPLETION, card.scope)
-        assertEquals("on", card.answer)
+        assertEquals(EvidenceScope.FORM_RECALL, card.scope)
+        assertEquals("depend on", card.answer)
+        assertFalse(CardFactory.termRegex("depend").containsMatchIn(card.prompt))
+        assertFalse(card.alternatives.contains("rely"))
     }
 }

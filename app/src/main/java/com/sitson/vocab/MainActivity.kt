@@ -87,23 +87,20 @@ fun VocabApp(vm: AppViewModel) {
     Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("今天", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            TextButton(onClick = onTime) { Text("每天 ${vm.runtime.dailyMinutes} 分钟") }
+            TextButton(onClick = onTime) { Text("每日目标 ${vm.runtime.dailyMinutes} 分钟") }
         }
         Text("把认识的词，\n变成用得出的词。", style = MaterialTheme.typography.headlineMedium)
-        HintText(if (vm.statistics.due > 0) "先巩固旧内容，再学一点新的。" else "跟着眼前这一步，慢慢积累自己的表达。")
         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                Text(when { vm.card != null -> "接着上次，继续就好。"; vm.budgetReached -> "今天先到这里。"; else -> "从一小轮开始。" }, style = MaterialTheme.typography.titleLarge)
-                HintText(if (vm.card != null) "题目和作答状态都已保留。" else if (vm.budgetReached) "给记忆一点时间。明天会继续安排。" else "每轮最多 5 步，随时都可以收工。")
-                Primary(if (vm.card != null) "继续学习" else if (vm.budgetReached) "自愿再练 5 分钟" else "开始今天的学习", !vm.working) { vm.start(extra = vm.budgetReached) }
+                Text(if (vm.budgetReached) "今日目标已达成" else "学多少，你决定", style = MaterialTheme.typography.titleLarge)
+                Primary(if (vm.card != null) "继续学习" else "开始学习", !vm.working) { vm.start() }
             }
         }
         HintText("今天已学 ${vm.todayWork.activeMillis / 60_000} 分钟 · ${vm.statistics.due} 个义项建议巩固")
         if (vm.statistics.senses == 0) HintText("词库为空。可在词库导入词包或添加词汇。")
         if (vm.runtime.lastUndoKey != null) TextButton(onClick = vm::undo, enabled = !vm.working) { Text("撤销上一次评分") }
-        HorizontalDivider()
-        Text("认识，还要能用出来", style = MaterialTheme.typography.titleMedium)
-        HintText("复习中会穿插短表达。没想起来也没关系，先看清用法，之后再巩固。")
+        val todayAttempts = vm.attempts.filter { it.day == vm.todayWork.day && it.valid && it.outcome !in listOf("TAUGHT", "SKIP", "VOID") }
+        HintText("看得懂 ${todayAttempts.count { it.dimension == MasteryDimension.CONTEXT_COMPREHENSION.name }} 次 · 用得出 ${todayAttempts.count { it.dimension == MasteryDimension.PRODUCTION.name }} 次")
     }
 }
 
@@ -112,23 +109,22 @@ fun VocabApp(vm: AppViewModel) {
     val steps = vm.runtime.session?.steps ?: 0
     Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("本轮 ${if (c.phase == "FEEDBACK") steps else steps + 1} / 5", style = MaterialTheme.typography.labelLarge)
+            Text("已完成 $steps 步", style = MaterialTheme.typography.labelLarge)
             TextButton(onClick = vm::pause, enabled = !vm.working) { Text("先收工") }
         }
-        LinearProgressIndicator(progress = { steps / 5f }, modifier = Modifier.fillMaxWidth())
-        Text(if (c.kind == ExerciseKind.TEACH) "认识一个新表达" else if (c.guided) "刚学过，轻轻回忆一次" else c.dimension.label,
+        Text(if (c.kind == ExerciseKind.TEACH) "学新词" else c.dimension.label,
             style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
         when (c.phase) {
             "FEEDBACK" -> {
                 Text(c.feedback, style = MaterialTheme.typography.titleMedium)
                 AnswerCard(c)
-                Primary(if (steps >= 5) "完成这一轮" else "继续", !vm.working, vm::next)
+                Primary("继续", !vm.working, vm::next)
                 TextButton(onClick = vm::report, enabled = !vm.working) { Text("这道题有问题") }
             }
             "REVEALED", "UNJUDGED" -> {
                 if (c.phase == "UNJUDGED") {
                     HintText("你的回答：${c.draft}")
-                    HintText("表达可能不止一种。请核对参考答案；系统不会仅因字符串不同就判你答错。")
+                    HintText("请核对参考表达")
                 }
                 AnswerCard(c)
                 HintText(if (c.hints > 0) "用过提示后，这次有没有想起来？" else "回想看答案之前，你是哪种情况？")
@@ -145,8 +141,7 @@ fun VocabApp(vm: AppViewModel) {
             else -> {
                 if (c.kind == ExerciseKind.TEACH) {
                     AnswerCard(c)
-                    HintText("先记住一个意思和一个搭配就够了。")
-                    Primary("看懂了，试着回忆一下", !vm.working) { vm.grade(Outcome.TAUGHT) }
+                    Primary("下一个", !vm.working) { vm.grade(Outcome.TAUGHT) }
                 } else {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -155,7 +150,6 @@ fun VocabApp(vm: AppViewModel) {
                             HintText(when { c.kind == ExerciseKind.CHOICE -> "这句话更接近哪个意思？"; c.dimension == MasteryDimension.PRODUCTION -> "先想出空缺的英文表达。"; else -> "在心里说说，这里的表达是什么意思？" })
                             if (c.hints > 0) {
                                 HintText(if (c.dimension == MasteryDimension.PRODUCTION) "提示：以 ${c.answer.firstOrNull() ?: '…'} 开头。" else "提示：${c.definition}")
-                                HintText("这次算有提示练习，之后再试独立回忆。")
                             }
                         }
                     }
@@ -188,18 +182,15 @@ fun VocabApp(vm: AppViewModel) {
     }
 }
 @Composable private fun AnswerCard(c: LearningCard) {
-    var details by remember(c.key) { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(c.term, style = MaterialTheme.typography.headlineLarge)
             HintText(c.phonetic)
             Text(c.definition, style = MaterialTheme.typography.titleLarge)
             Text(c.phrase, color = MaterialTheme.colorScheme.primary)
-            if (c.scope == EvidenceScope.PATTERN_COMPLETION) Text("空缺处：${c.answer}", style = MaterialTheme.typography.titleMedium)
+            if (c.dimension == MasteryDimension.PRODUCTION) Text("参考表达：${c.answer}", style = MaterialTheme.typography.titleMedium)
             if (c.kind == ExerciseKind.TEACH) Text(c.prompt, style = MaterialTheme.typography.bodyLarge)
             HintText(c.explanation)
-            TextButton(onClick = { details = !details }) { Text(if (details) "收起" else "为什么这样练？") }
-            if (details) HintText(c.reason)
         }
     }
 }
@@ -211,15 +202,13 @@ fun VocabApp(vm: AppViewModel) {
     val new = results.filter { it.outcome == "TAUGHT" }.map { it.wordId }.distinct().size
     val weak = results.filter { it.outcome in listOf("AGAIN", "ASSISTED", "HARD", "ALTERNATIVE") }.map { it.wordId }.distinct().size
     Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        Text("这一轮，先到这里。", style = MaterialTheme.typography.headlineLarge)
-        HintText(when (s?.finishReason) { "TIME" -> "今天的时间已经用得差不多了，给记忆一点休息。"; "EMPTY" -> "当前适合练习的内容已处理。间隔后再来，或在词库补充新内容。"; else -> "完成一小轮，就是进展。" })
+        Text(if (s?.finishReason == "WAIT") "稍后继续练习" else "当前练习已完成", style = MaterialTheme.typography.headlineLarge)
+        HintText(if (s?.finishReason == "WAIT") "刚学的词正在间隔，稍后自动继续。" else "可添加新词，或加练已学内容。")
         Text("练习了 $studied 个义项\n新认识 $new 个义项", style = MaterialTheme.typography.titleLarge)
-        HintText(if (weak > 0) "$weak 个表达需要再巩固。后面会隔开再试，不必现在反复背。" else "之后还会隔一段时间、换个语境再检查。")
-        if (s?.finishReason == "ROUND" && !vm.budgetReached) Primary("继续一轮", !vm.working) { vm.start() }
-        Primary("今天先收工", !vm.working, vm::pause)
-        if (vm.budgetReached) TextButton(onClick = { vm.start(extra = true) }, enabled = !vm.working) { Text("自愿再练 5 分钟") }
+        if (weak > 0) HintText("$weak 个表达待巩固")
+        if (s?.finishReason != "WAIT") Primary("继续加练", !vm.working) { vm.start(extra = true) }
+        Primary("返回首页", !vm.working, vm::pause)
         if (vm.runtime.lastUndoKey != null) TextButton(onClick = vm::undo, enabled = !vm.working) { Text("撤销上一次评分") }
-        HintText("完成本轮不代表全部义项已掌握。剩余到期内容会继续保留。")
     }
 }
 

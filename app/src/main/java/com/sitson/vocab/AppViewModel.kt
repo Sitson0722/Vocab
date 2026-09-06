@@ -50,7 +50,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive) {
                 delay(1000)
                 if (ready && foreground && studyOpen && !working) {
-                    runCatching { mutation.withLock { checkpoint() } }.onFailure { message = "学习时间暂未保存，请稍后重试。" }
+                    runCatching { mutation.withLock {
+                        checkpoint()
+                        if (card == null && runtime.session?.finishReason == "WAIT") accept(repository.next())
+                    } }.onFailure { message = "学习时间暂未保存，请稍后重试。" }
                 }
             }
         }

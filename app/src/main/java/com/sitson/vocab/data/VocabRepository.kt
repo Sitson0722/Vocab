@@ -26,6 +26,12 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
             }
             r = r.copy(initialized = true); save(r)
         }
+        // Retire only the old immediate guided card; retain its exposure and all saved answers.
+        val legacySession = r.session
+        if (legacySession?.card?.guided == true && legacySession.card.phase == "QUESTION") {
+            r = selectNext(r.copy(session = legacySession.copy(card = null, guidedWordId = null)))
+            save(r)
+        }
         r
     }
     suspend fun words() = dao.words()
@@ -64,12 +70,10 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
         val old = r.session
         if (old?.card != null) return@withTransaction r // resume exact question/back, including committed feedback
         val day = today()
-        val budget = r.dailyMinutes * 60_000L
-        val spent = r.day(day).activeMillis
         val sameDay = old?.day == day
-        val allowance = if (extra) spent + 5 * 60_000L else budget
-        r = r.copy(session = StudySession(UUID.randomUUID().toString(), now(), day, allowance,
-            guidedWordId = old?.guidedWordId,
+        // The legacy allowance field now only distinguishes voluntary early review.
+        // Daily minutes remain a personal goal, never a queue limit.
+        r = r.copy(session = StudySession(UUID.randomUUID().toString(), now(), day, if (extra) Long.MAX_VALUE else 0,
             repairs = if (sameDay) old?.repairs.orEmpty() else emptyList(), retried = if (sameDay) old?.retried.orEmpty() else emptyList()))
         r = selectNext(r); save(r); r
     }
@@ -77,18 +81,15 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
     suspend fun next(): LearningRuntime = db.withTransaction {
         val r = runtime(); val s = r.session ?: return@withTransaction r
         if (s.card != null && s.card.phase != "FEEDBACK") return@withTransaction r
-        selectNext(r.copy(session = s.copy(card = null))).also { save(it) }
+        selectNext(r.copy(session = s.copy(card = null))).also { if (it != r) save(it) }
     }
 
     private suspend fun selectNext(input: LearningRuntime): LearningRuntime {
         var r = input
         var s = r.session ?: return r
         val time = now(); val day = today()
-        if (s.day != day) { s = s.copy(day = day, extraUntilMillis = r.dailyMinutes * 60_000L, repairs = emptyList(), retried = emptyList()); r = r.copy(session = s) }
+        if (s.day != day) { s = s.copy(day = day, repairs = emptyList(), retried = emptyList()); r = r.copy(session = s) }
         fun finish(reason: String) = r.copy(session = s.copy(card = null, finishReason = reason))
-        if (s.steps >= SessionPolicy.ROUND_SIZE) return finish("ROUND")
-        val remaining = s.extraUntilMillis - r.day(day).activeMillis
-        if (remaining <= 0) return finish("TIME")
         val words = dao.words(); val byId = words.associateBy { it.id }
         val progress = dao.allProgress().filter { it.dimension in ACTIVE_DIMENSIONS }
         val attempts = dao.allAttempts(); val exposures = dao.allExposures()
@@ -103,64 +104,59 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
             progress.filter { byId[it.wordId]?.term == word.term }.maxOfOrNull { it.lastReviewedAt } ?: 0)
         fun cooled(word: WordSenseEntity): Boolean {
             val last = lastExposure(word)
-            val other = attempts.count { it.createdAt > last && byId[it.wordId]?.term != word.term }
-            return time - last >= 20 * GraduationPolicy.HOUR || SessionPolicy.canRepeat(time, last, other)
+            val other = attempts.filter { it.valid && it.outcome !in listOf("SKIP", "VOID") && it.createdAt > last }
+                .mapNotNull { byId[it.wordId]?.term }.filter { it != word.term }.distinct().size
+            return SessionPolicy.canRepeat(time, last, other)
         }
         val skipped = attempts.filter { it.sessionId == s.id && it.outcome in listOf("SKIP", "VOID") }.map { "${it.wordId}:${it.dimension}" }.toSet()
         val due = progress.filter { it.attempts > 0 && it.dueAt <= time }
-        val dueMillis = due.sumOf { if (it.dimension == "PRODUCTION") 35_000L else 25_000L }
-        // Initial teaching may have ONE guided retrieval immediately. It is explicitly weak evidence,
-        // doesn't update FSRS, and avoids a cold-start deadlock when only one new word is available.
-        val guided = s.guidedWordId?.let { id -> progress.firstOrNull { it.wordId == id && it.dimension == "CONTEXT_COMPREHENSION" } }
         val retry = progress.filter { key(it) in s.repairs && s.retried.none { k -> k.substringBefore(':') == it.wordId.toString() } }
-        val initial = progress.filter { p -> p.wordId in introduced && p.attempts == 0 &&
-            (p.dimension == "CONTEXT_COMPREHENSION" || attempts.any { it.wordId == p.wordId && it.dimension == "CONTEXT_COMPREHENSION" && it.valid && it.outcome == "GOOD" }) }
+        // Both abilities are compulsory queue candidates. Understanding need not succeed
+        // before expression can be practised; neither dimension can stand in for the other.
+        val initial = progress.filter { it.wordId in introduced && it.attempts == 0 }
+            .sortedWith(compareByDescending<ProgressEntity> { p -> progress.any { it.wordId == p.wordId && it.attempts > 0 } }
+                .thenBy { p -> attempts.firstOrNull { it.wordId == p.wordId && it.valid }?.createdAt ?: 0 }
+                .thenBy { if (it.dimension == "CONTEXT_COMPREHENSION") 0 else 1 }.thenBy { it.wordId })
         val dueSorted = due.sortedWith(compareByDescending<ProgressEntity> { SessionPolicy.overdue(time, it.dueAt, it.lastReviewedAt) }.thenBy { it.lastReviewedAt }.thenBy { it.wordId })
-        val extraPractice = if (s.extraUntilMillis > r.dailyMinutes * 60_000L) progress.filter { it.attempts > 0 }.sortedBy { it.lastReviewedAt } else emptyList()
-        val reviewCandidates = (listOfNotNull(guided) + retry + dueSorted + initial + extraPractice).distinctBy { key(it) }
-        val newAllowed = SessionPolicy.canIntroduce(remaining, dueMillis, r.day(day).newSenses.size, adjustedNewMinutes(r))
-        val fresh = if (newAllowed) progress.filter { it.wordId !in introduced && it.dimension == "CONTEXT_COMPREHENSION" } else emptyList()
-        for (p in reviewCandidates + fresh) {
+        val extraPractice = if (s.extraUntilMillis == Long.MAX_VALUE) progress.filter { it.attempts > 0 }.sortedBy { it.lastReviewedAt } else emptyList()
+        val fresh = progress.filter { it.wordId !in introduced && it.dimension == "CONTEXT_COMPREHENSION" }
+        val candidates = (retry + dueSorted + initial + fresh + extraPractice).distinctBy { key(it) }
+        var waiting = false
+        for (p in candidates) {
             val word = byId[p.wordId] ?: continue
-            val isGuided = guided?.wordId == p.wordId && p.dimension == "CONTEXT_COMPREHENSION"
-            if (key(p) in skipped || (!isGuided && !cooled(word))) continue
+            if (key(p) in skipped) continue
             val teaching = p.wordId !in introduced
             val isRepair = key(p) in s.repairs
             // A retried lapse waits for its real next due date; restarting a short round cannot farm retries.
             if (isRepair && (s.retried.any { it.substringBefore(':') == p.wordId.toString() } || r.day(day).repairMillis >= r.dailyMinutes * 12_000L)) continue
-            val observed = r.selfGradeStreak >= 4 || (p.dimension == "PRODUCTION" && p.attempts == 0) ||
+            val observed = r.selfGradeStreak >= 4 || p.dimension == "PRODUCTION" ||
                 attempts.count { it.wordId == p.wordId && it.dimension == p.dimension && it.source == "OBSERVED" && it.valid } < 3
             val dimEvidence = attempts.filter { it.wordId == word.id && it.dimension == p.dimension }.mapNotNull(::evidence)
             val needsDiversity = !GraduationPolicy.verified(MasteryDimension.valueOf(p.dimension), dimEvidence)
             val provenFamilies = dimEvidence.filter { GraduationPolicy.qualifies(it) }.map { it.family }.toSet()
             val pool = materials.filter { it.wordId == word.id }.sortedWith(compareBy<MaterialEntity> {
                 when { !needsDiversity -> 0; it.family.isBlank() -> 2; it.family !in provenFamilies -> 0; else -> 1 }
-            }.thenBy { usages[it.id].orEmpty().count { use -> use.dimension == p.dimension } }
+            }.thenBy { if (p.attempts == 0) usages[it.id].orEmpty().size else 0 }
+                .thenBy { usages[it.id].orEmpty().count { use -> use.dimension == p.dimension } }
                 .thenBy { usages[it.id].orEmpty().filter { use -> use.dimension == p.dimension }.maxOfOrNull { use -> use.shownAt } ?: 0 }
                 .thenBy { usages[it.id].orEmpty().size }.thenBy { it.id })
             for (m in pool) {
-                val card = CardFactory.create(word, m, MasteryDimension.valueOf(p.dimension), teaching, observed && !isGuided, isGuided,
+                val card = CardFactory.create(word, m, MasteryDimension.valueOf(p.dimension), teaching, observed, false,
                     time, lastExposure(word), when {
                         teaching -> "先认识这个义项和一个核心搭配。"
-                        isGuided -> "刚学过，轻轻回忆一次。这次只是引导练习。"
                         isRepair -> "隔开了一些内容，再试一次刚才没想起的表达。"
                         p.attempts == 0 -> "这项能力还没单独检查过，试着回忆一下。"
                         observed -> "换一个任务，检查是否真的想起来了。"
                         else -> "这个义项到了复习时间。"
                     })?.copy(repair = isRepair) ?: continue
-                if (SessionPolicy.estimate(card.kind) > remaining && s.steps > 0) continue
+                if (!cooled(word)) { waiting = true; break }
                 dao.insertUsage(MaterialUsageEntity(materialId = m.id, dimension = p.dimension, shownAt = time))
                 // Conservative: a front is an exposure even if it only contains a meaning cue.
                 dao.insertExposure(ExposureEntity("${card.key}:front", word.id, time, "FRONT"))
                 return r.copy(session = s.copy(card = card, finishReason = "", retried = if (isRepair) (s.retried + key(p)).distinct() else s.retried))
             }
         }
-        return finish("EMPTY")
-    }
-
-    private fun adjustedNewMinutes(r: LearningRuntime): Int {
-        val recent = r.days.filter { it.day != today() }.sortedByDescending { it.day }.take(3)
-        return if (recent.size == 3 && recent.all { it.activeMillis > r.dailyMinutes * 72_000L }) when (r.dailyMinutes) { 15 -> 10; else -> 5 } else r.dailyMinutes
+        return finish(if (waiting) "WAIT" else "EMPTY")
     }
 
     /** Active time comes from a foreground monotonic ticker, never wall time since app launch. */
@@ -230,21 +226,21 @@ class VocabRepository(private val db: VocabDatabase, private val now: () -> Long
         val repairKey = "${c.wordId}:${c.dimension.name}"
         val repair = outcome in listOf(Outcome.AGAIN, Outcome.HARD, Outcome.ASSISTED, Outcome.ALTERNATIVE)
         val feedback = when (outcome) {
-            Outcome.GOOD -> "这次想起来了。之后隔一段时间，再换个语境检查。"
-            Outcome.HARD -> "费劲想起，也有进展。后面再巩固一下。"
-            Outcome.AGAIN -> "先看一眼用法就好，隔开后再试。"
-            Outcome.ASSISTED -> "这次借助提示完成了，之后再试独立回忆。"
-            Outcome.ALTERNATIVE -> "你的表达也可以成立；目标表达还需要另一次检查。"
-            Outcome.TAUGHT -> "先认识这个意思。接下来轻轻回忆一次。"
-            Outcome.SKIP -> "已跳过，本题不改变记忆进度。"
-            Outcome.VOID -> "已标记题目问题，本题不影响记忆进度。"
+            Outcome.GOOD -> "想起来了"
+            Outcome.HARD -> "再巩固一下"
+            Outcome.AGAIN -> "隔开后再试"
+            Outcome.ASSISTED -> "借助提示完成"
+            Outcome.ALTERNATIVE -> "表达成立，下次再试目标表达"
+            Outcome.TAUGHT -> "已学，稍后练习"
+            Outcome.SKIP -> "已跳过"
+            Outcome.VOID -> "已标记问题"
         }
         val work = r.day(day)
         var next = r.withDay(if (outcome == Outcome.TAUGHT) work.copy(newSenses = (work.newSenses + c.wordId).distinct()) else work)
             .copy(lastUndoKey = if (undoable) c.key else null,
                 selfGradeStreak = when { source == EvidenceSource.OBSERVED -> 0; source == EvidenceSource.SELF_REPORTED && !c.guided -> r.selfGradeStreak + 1; else -> r.selfGradeStreak },
                 session = s.copy(steps = s.steps + 1, attempts = s.attempts + c.key,
-                    guidedWordId = if (outcome == Outcome.TAUGHT) c.wordId else if (c.guided) null else s.guidedWordId,
+                    guidedWordId = null,
                     repairs = if (repair && repairKey !in s.retried) (s.repairs + repairKey).distinct() else s.repairs.filterNot { it == repairKey },
                     card = c.copy(phase = "FEEDBACK", revealed = true, feedback = feedback)))
         if (outcome == Outcome.VOID) { invalidateMaterial(c.materialId); next = next.copy(lastUndoKey = null) }

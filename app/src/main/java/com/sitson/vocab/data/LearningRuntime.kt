@@ -57,7 +57,7 @@ object RuntimeCodec {
             if (j.isNull("lastUndoKey")) null else j.getString("lastUndoKey"), j.optJSONArray("pendingWords")?.strings().orEmpty()).also { r ->
                 require(r.dailyMinutes in listOf(5, 10, 15) && r.maxDailyCalls in 0..10 && r.selfGradeStreak >= 0)
                 require(r.days.map { it.day }.distinct().size == r.days.size && r.days.all { it.activeMillis >= 0 && it.aiCalls >= 0 })
-                r.session?.let { s -> require(s.steps in 0..5 && s.attempts.size == s.steps && s.card?.phase in listOf(null, "QUESTION", "REVEALED", "FEEDBACK", "UNJUDGED")) }
+                r.session?.let { s -> require(s.steps >= 0 && s.attempts.size == s.steps && s.card?.phase in listOf(null, "QUESTION", "REVEALED", "FEEDBACK", "UNJUDGED")) }
             }
     }
     private fun sessionJson(s: StudySession) = JSONObject().apply {
